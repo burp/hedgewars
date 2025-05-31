@@ -23,7 +23,6 @@
     // and ~/Library/Application Support/Hedgewars on macos
     const QString cfgdir_path = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/hedgewars";
 #endif
-QDir cfgdir(cfgdir_path);
 
 
 PlayersListModel::PlayersListModel(QObject *parent) :
@@ -449,7 +448,7 @@ void PlayersListModel::loadIgnoredIpHashes()
     m_ignoredIpHashes.clear();
     if (m_nickname.isEmpty()) return;
     // Filename changed to reflect storing server hashes
-    QFile file(cfgdir.filePath(m_nickname.toLower() + "_ignored_server_ip_hashes.txt"));
+    QFile file(cfgdir->filePath(m_nickname.toLower() + "_ignored_server_ip_hashes.txt"));
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QTextStream in(&file);
         while (!in.atEnd()) {
@@ -466,7 +465,7 @@ void PlayersListModel::saveIgnoredIpHashes() const
 {
     if (m_nickname.isEmpty()) return;
     // Filename changed to reflect storing server hashes
-    QFile file(cfgdir.filePath(m_nickname.toLower() + "_ignored_server_ip_hashes.txt"));
+    QFile file(cfgdir->filePath(m_nickname.toLower() + "_ignored_server_ip_hashes.txt"));
     if (m_ignoredIpHashes.isEmpty()) {
         if (file.exists()) {
             file.remove();

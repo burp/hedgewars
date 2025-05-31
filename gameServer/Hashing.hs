@@ -2,14 +2,14 @@
  * Hedgewars, a free turn based strategy game
  * This module provides IP hashing functionality for the server.
 -}
-
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Hashing (hashAddress) where
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Crypto.Hash (Digest, SHA256, hashWith)
+import Crypto.Hash (Digest, SHA256, hash)
 import Data.ByteArray.Encoding (convertToBase, Base(Base16))
 import Network.Socket (SockAddr, getNameInfo, NameInfoFlag(NI_NUMERICHOST))
 -- Control.Monad.IO.Class (liftIO) is not used with try
@@ -40,7 +40,7 @@ hashAddress salt sockAddr = do
                 saltedIpBytes = salt `B.append` ipBytes
                 -- Compute SHA256 hash
                 hashDigest :: Digest SHA256
-                hashDigest = hashWith SHA256 saltedIpBytes
+                hashDigest = hash saltedIpBytes
                 -- Convert hash to hex-encoded ByteString, then to Text
                 hexHash = T.toLower $ TE.decodeUtf8 $ convertToBase Base16 hashDigest
             in return $ Just hexHash

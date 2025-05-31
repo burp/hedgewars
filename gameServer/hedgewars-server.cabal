@@ -28,6 +28,7 @@ Executable hedgewars-server
     Data.TConfig
     EngineInteraction
     FloodDetection
+    Hashing
     HWProtoChecker
     HWProtoCore
     HWProtoInRoomState
@@ -66,13 +67,16 @@ Executable hedgewars-server
     SHA,
     time,
     utf8-string,
-    vector
+    vector,
+    text >= 1.2,
+    cryptonite >= 0.25 && < 0.31,
+    memory,
+    base64-bytestring
 
 -- These dependencies are for OFFICIAL_SERVER only and do not need to be mentioned in docs
   if flag(officialServer)
     build-depends:
       aeson,
-      text >= 1.2,
       yaml >= 0.8.30,
       zlib >= 0.5.3 && < 0.7
     cpp-options:   -DOFFICIAL_SERVER

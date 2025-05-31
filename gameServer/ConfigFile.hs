@@ -22,7 +22,8 @@ module ConfigFile where
 import Data.Maybe
 import Data.TConfig
 import qualified Data.ByteString.Char8 as B
-import qualified Codec.Binary.Base64.String as B64 -- For Base64 encoding/decoding
+-- import qualified Codec.Binary.Base64.String as B64 -- For Base64 encoding/decoding
+import qualified Data.ByteString.Base64 as B64
 import System.Entropy (getEntropy) -- For generating random salt
 import Control.Monad (liftM) -- For older GHC versions, often used with Applicative/Monad
 -------------------
@@ -35,19 +36,22 @@ cfgFileName = "hedgewars-server.ini"
 readServerConfig :: ServerInfo -> IO ServerInfo
 readServerConfig serverInfo' = do
     cfg <- readConfig cfgFileName
+    let maybeSaltConfigStr = getValue "serverWideSalt" cfg -- This is String from TConfig
 
-    -- Read serverWideSalt
-    let loadedSaltStr = getValue "serverWideSalt" cfg
-    finalSalt <- case loadedSaltStr of
-        Just s | not (null s) ->
-            case B64.decode s of
-                Left err -> do
-                    putStrLn $ "Warning: Failed to decode serverWideSalt from config: " ++ err ++ ". Generating a new one."
-                    getEntropy 32
-                Right decodedSaltBytes -> return (B.pack decodedSaltBytes)
-        _ -> do
+    (finalSalt, shouldWriteConfigBack) <- case maybeSaltConfigStr of
+        Just s | not (null s) -> do -- s is String
+            let s_bytes = B.pack s -- Convert String from config to ByteString for B64.decode
+            case B64.decode s_bytes of -- B64.decode takes ByteString, returns Either ByteString ByteString (or similar for error)
+                Left err -> do -- err is likely ByteString or String depending on the version
+                    putStrLn $ "Warning: Failed to decode serverWideSalt from config (Base64): " ++ err ++ ". Generating a new one."
+                    newSalt <- getEntropy 32 -- IO ByteString
+                    return (newSalt, True)
+                Right decodedSaltBS -> return (decodedSaltBS, False) -- This is already ByteString
+
+        _ -> do -- Not found or empty in config
             putStrLn "serverWideSalt not found in config or is empty. Generating a new one."
-            getEntropy 32
+            newSalt <- getEntropy 32 -- IO ByteString
+            return (newSalt, True)
 
     let si = serverInfo'{
         dbHost = value "dbHost" cfg (dbHost serverInfo')
@@ -76,7 +80,7 @@ readServerConfig serverInfo' = do
 
 writeServerConfig :: ServerInfo -> IO ()
 writeServerConfig ServerInfo{serverConfig = Nothing} = return ()
-writeServerConfig ServerInfo{
+writeServerConfig si@ServerInfo{
     dbHost = dh,
     dbName = dn,
     dbLogin = dl,
@@ -91,11 +95,12 @@ writeServerConfig ServerInfo{
     writeConfig cfgFileName $ foldl1 (.) entries cfg
     where
         -- Encode salt to Base64 String before saving
-        encodedSaltStr = B64.encode $ B.unpack swSalt
+        encodedSaltBytes = B64.encode (serverWideSalt si)
+        encodedSaltConfigStr = B.unpack encodedSaltBytes -- Convert encoded ByteString back to String for TConfig
         entries =
             repConfig "sv_latestProto" (show ver)
             : repConfig "bans" (show b)
-            : repConfig "serverWideSalt" encodedSaltStr -- Add salt to entries
+            : repConfig "serverWideSalt" encodedSaltConfigStr -- Add salt to entries
             : map (\(n, v) -> repConfig n (B.unpack v)) [
             ("dbHost", dh)
             , ("dbName", dn)
