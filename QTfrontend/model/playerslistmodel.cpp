@@ -4,15 +4,39 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDebug>
+#include <QCryptographicHash>
+#include <QUuid>
+#include <QSettings>
+#include <QStandardPaths>
+
 
 #include "playerslistmodel.h"
 #include "hwconsts.h"
+
+// FIXME: config location is duplicated from cmdoptions.cpp and netclient.cpp
+// should be provided by some common place (main.cpp?)
+#ifdef Q_OS_WIN
+    // typically C:/Users/<User>/AppData/Roaming/Hedgewars
+    const QString cfgdir_path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+#else
+    // typically ~/.hedgewars or ~/.config/hedgewars on linux
+    // and ~/Library/Application Support/Hedgewars on macos
+    const QString cfgdir_path = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + "/hedgewars";
+#endif
+QDir cfgdir(cfgdir_path);
+
 
 PlayersListModel::PlayersListModel(QObject *parent) :
     QAbstractListModel(parent)
 {
     m_fontInRoom = QFont();
     m_fontInRoom.setItalic(true);
+    initSalt();
+    loadIgnoredIpHashes();
+    // m_nickname is empty initially, so loadSet won't load anything here.
+    // It will be called again when setNickname is called.
+    loadSet(m_friendsSet, "friends");
+    loadSet(m_ignoredSet, "ignore");
 }
 
 
@@ -104,6 +128,7 @@ void PlayersListModel::addPlayer(const QString & nickname, bool notify)
     checkFriendIgnore(mi);
 
     emit nickAddedLobby(nickname, notify);
+    // After setData(mi, nickname);, potentially initialize IP for this player if available, or it will be set by onPlayerInfo.
 }
 
 
@@ -114,6 +139,7 @@ void PlayersListModel::removePlayer(const QString & nickname, const QString &msg
     else
         emit nickRemovedLobby(nickname, msg);
 
+    m_playerIpMap.remove(nickname.toLower());
     QModelIndex mi = nicknameIndex(nickname);
 
     if(mi.isValid())
@@ -173,6 +199,24 @@ void PlayersListModel::setFlag(const QString &nickname, StateFlag flagType, bool
 
         saveSet(m_ignoredSet, "ignore");
     }
+    else if (flagType == IgnoreIP)
+    {
+        QString playerIp = getPlayerIp(nickname); // Use new getter
+        if (!playerIp.isEmpty()) {
+            QString ipHash = getSaltedIpHash(playerIp);
+            if (!ipHash.isEmpty()) {
+                if (isSet) {
+                    m_ignoredIpHashes.insert(ipHash);
+                } else {
+                    m_ignoredIpHashes.remove(ipHash);
+                }
+                saveIgnoredIpHashes(); // Save changes
+            }
+        }
+        // Also update the visual representation if needed by calling updateIcon(mi)
+        // QModelIndex mi = nicknameIndex(nickname);
+        // if (mi.isValid()) updateIcon(mi);
+    }
 
     QModelIndex mi = nicknameIndex(nickname);
 
@@ -198,7 +242,7 @@ bool PlayersListModel::isFlagSet(const QString & nickname, StateFlag flagType)
     else if(flagType == Friend)
         return isFriend(nickname);
     else if(flagType == Ignore)
-        return isIgnored(nickname);
+        return isIgnored(nickname); // isIgnored checks m_ignoredSet
     else
         return false;
 }
@@ -352,6 +396,7 @@ void PlayersListModel::setNickname(const QString &nickname)
 
     loadSet(m_friendsSet, "friends");
     loadSet(m_ignoredSet, "ignore");
+    loadIgnoredIpHashes(); // Reload in case nickname changed
 
     for(int i = rowCount() - 1; i >= 0; --i)
         checkFriendIgnore(index(i));
@@ -399,6 +444,120 @@ void PlayersListModel::loadSet(QSet<QString> & set, const QString & suffix)
     }
 
     txt.close();
+}
+
+void PlayersListModel::initSalt()
+{
+    QSettings settings("Hedgewars", "Client");
+    m_salt = settings.value("UserSalt").toString();
+    if (m_salt.isEmpty()) {
+        m_salt = QUuid::createUuid().toString();
+        settings.setValue("UserSalt", m_salt);
+    }
+}
+
+QString PlayersListModel::getSaltedIpHash(const QString& ipAddress) const
+{
+    if (m_salt.isEmpty() || ipAddress.isEmpty()) {
+        return QString();
+    }
+    return QString(QCryptographicHash::hash((ipAddress + m_salt).toUtf8(), QCryptographicHash::Sha256).toHex());
+}
+
+void PlayersListModel::loadIgnoredIpHashes()
+{
+    m_ignoredIpHashes.clear();
+    if (m_nickname.isEmpty()) return;
+    QFile file(cfgdir.filePath(m_nickname.toLower() + "_ignored_ips.txt"));
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&file);
+        while (!in.atEnd()) {
+            QString line = in.readLine().trimmed();
+            if (!line.isEmpty()) {
+                m_ignoredIpHashes.insert(line);
+            }
+        }
+        file.close();
+    }
+}
+
+void PlayersListModel::saveIgnoredIpHashes() const
+{
+    if (m_nickname.isEmpty()) return;
+    QFile file(cfgdir.filePath(m_nickname.toLower() + "_ignored_ips.txt"));
+    if (m_ignoredIpHashes.isEmpty()) {
+        if (file.exists()) {
+            file.remove();
+        }
+        return;
+    }
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        QTextStream out(&file);
+        out << "; IP hashes to ignore for user " << m_nickname << endl;
+        for (const QString &hash : m_ignoredIpHashes) {
+            out << hash << "\n";
+        }
+        file.close();
+    }
+}
+
+bool PlayersListModel::isIpIgnored(const QString & ipAddress) const
+{
+    if (ipAddress.isEmpty()) {
+        return false;
+    }
+    QString hash = getSaltedIpHash(ipAddress);
+    if (hash.isEmpty()) return false;
+    return m_ignoredIpHashes.contains(hash);
+}
+
+void PlayersListModel::storePlayerIp(const QString& nickname, const QString& ipAddress)
+{
+    m_playerIpMap[nickname.toLower()] = ipAddress;
+}
+
+QString PlayersListModel::getPlayerIp(const QString& nickname) const
+{
+    return m_playerIpMap.value(nickname.toLower());
+}
+
+QStringList PlayersListModel::getUsersByIpHash(const QString& ipHash) const
+{
+    QStringList users;
+    if (ipHash.isEmpty()) {
+        return users;
+    }
+
+    // Iterate through all players in m_data (the list of active players)
+    for (const DataEntry &entry : m_data) {
+        QString currentNick = entry.value(Qt::DisplayRole).toString();
+        if (currentNick.isEmpty()) {
+            continue;
+        }
+        QString currentIp = getPlayerIp(currentNick); // Use existing helper
+        if (!currentIp.isEmpty()) {
+            QString currentIpHash = getSaltedIpHash(currentIp);
+            if (currentIpHash == ipHash) {
+                users.append(currentNick);
+            }
+        }
+    }
+    users.removeDuplicates(); // Just in case of any inconsistencies
+    return users;
+}
+
+QStringList PlayersListModel::getUsersByPlayerName(const QString& playerName) const
+{
+    QStringList users;
+    QString targetIp = getPlayerIp(playerName);
+    if (targetIp.isEmpty()) {
+        return users; // No IP known for this player
+    }
+    QString targetIpHash = getSaltedIpHash(targetIp);
+    if (targetIpHash.isEmpty()) {
+        return users; // Could not hash (e.g. no salt)
+    }
+    return getUsersByIpHash(targetIpHash);
 }
 
 void PlayersListModel::saveSet(const QSet<QString> & set, const QString & suffix)
