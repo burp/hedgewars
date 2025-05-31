@@ -507,6 +507,52 @@ void HWNewNet::ParseCmd(const QStringList & lst)
         return;
     }
 
+    if (lst[0] == "PLAYER_DETAILS")
+    {
+        if (lst.size() < 4) // Expecting: PLAYER_DETAILS nick ipHash flags
+        {
+            qWarning("Net: Malformed PLAYER_DETAILS message");
+            return;
+        }
+        QString nick = lst[1];
+        QString ipHashFromServer = lst[2]; // Server sends with brackets, e.g., "[hash]" or "[]"
+        QString flagsStr = lst[3];
+
+        // Process ipHash (remove brackets - similar to onPlayerInfo)
+        QString processedIpHash = ipHashFromServer;
+        if (processedIpHash.startsWith('[') && processedIpHash.endsWith(']')) {
+            processedIpHash = processedIpHash.mid(1, processedIpHash.length() - 2);
+        }
+        // If ipHashFromServer was "[]", processedIpHash becomes ""
+
+        // Ensure player exists in the model. If not, add them.
+        // This is important if PLAYER_DETAILS is the first time we hear about a user,
+        // or if it arrives before a more general LOBBY:JOINED for that nick.
+        QModelIndex playerIdx = m_playersModel->nicknameIndex(nick);
+        if (!playerIdx.isValid()) {
+            m_playersModel->addPlayer(nick, false); // Add player if not already known
+                                                   // 'false' for notify, as this is background info
+        }
+
+        // Store the IP hash
+        m_playersModel->storePlayerIpHash(nick, processedIpHash);
+
+        // Process flags string and update PlayersListModel
+        // Example: flagsStr from server could be "uac" (registered, admin, contributor)
+        // These characters 'u', 'a', 'c' align with CLIENT_FLAGS processing.
+        m_playersModel->setFlag(nick, PlayersListModel::Registered, flagsStr.contains('u'));
+        m_playersModel->setFlag(nick, PlayersListModel::ServerAdmin, flagsStr.contains('a'));
+        m_playersModel->setFlag(nick, PlayersListModel::Contributor, flagsStr.contains('c'));
+        // Note: The 'isMaster' (RoomAdmin, 'h') and 'isReady' ('r'), 'isInGame' ('g') flags
+        // are typically room-specific and handled by other messages like CLIENT_FLAGS or
+        // direct room state updates. PLAYER_DETAILS primarily conveys global/lobby-level flags
+        // and the IP hash. The 'isInRoom' ('i') flag is also usually handled by CLIENT_FLAGS.
+
+        // No specific signal is emitted here like playerInfo, as this is a background update.
+        // The model being updated will trigger views to refresh if they are connected to it.
+        return;
+    }
+
     if (lst[0] == "BANLIST")
     {
         QStringList tmp = lst;

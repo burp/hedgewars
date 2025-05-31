@@ -44,6 +44,7 @@ import qualified Data.Traversable as DT
 import Text.Regex.TDFA
 import qualified Text.Regex.TDFA as TDFA
 import qualified Text.Regex.TDFA.ByteString as TDFAB
+import qualified Data.Text.Encoding as TE -- Added
 -----------------------------
 #if defined(OFFICIAL_SERVER)
 import OfficialServer.GameReplayStore
@@ -190,30 +191,69 @@ processAction (ModifyServerInfo f) = do
     io $ writeServerConfig si
 
 
-processAction (MoveToRoom ri) = do
-    (Just ci) <- gets clientIndex
+processAction (MoveToRoom roomIdToJoin) = do
+    (Just joiningClientId) <- gets clientIndex
     rnc <- gets roomsClients
 
+    oldClientInfoBeforeMod <- io $ client'sM rnc id joiningClientId
+    let oldRoomId = clientRoom rnc joiningClientId
+
     io $ do
-        modifyClient rnc (
-            \cl -> cl{teamsInGame = 0
-                , isReady = False
-                , isMaster = False
-                , isInGame = False
-                , isJoinedMidGame = False
-                , clientClan = Nothing}) ci
-        modifyRoom rnc (\r -> r{playersIn = playersIn r + 1}) ri
-        moveClientToRoom rnc ri ci
+        modifyClient rnc (\cl -> cl{teamsInGame = 0, isReady = False, isMaster = False, isInGame = False, isJoinedMidGame = False, clientClan = Nothing}) joiningClientId
 
-    chans <- liftM (map sendChan) $ roomClientsS ri
-    clNick <- client's nick
-    allClientsChans <- liftM (Prelude.map sendChan . Prelude.filter isVisible) $! allClientsS
+        when (oldRoomId /= lobbyId && oldRoomId /= roomIdToJoin) $
+             let clientWasReadyInOldRoom = isReady oldClientInfoBeforeMod
+             in modifyRoom rnc (\r -> r{playersIn = playersIn r - 1,
+                                     readyPlayers = if clientWasReadyInOldRoom then readyPlayers r - 1 else readyPlayers r}) oldRoomId
 
-    mapM_ processAction [
-        AnswerClients chans ["JOINED", clNick]
-        , AnswerClients allClientsChans ["CLIENT_FLAGS", "+i", clNick]
-        , RegisterEvent RoomJoin
-        ]
+        modifyRoom rnc (\r -> r{playersIn = playersIn r + 1}) roomIdToJoin
+        moveClientToRoom rnc roomIdToJoin joiningClientId
+
+    joiningClientInfo <- io $ client'sM rnc id joiningClientId
+
+    let jcNick = nick joiningClientInfo
+    let jcIpHash = case ipHash joiningClientInfo of
+                       Just hashText -> TE.encodeUtf8 hashText
+                       Nothing -> B.empty
+    let jcFlags = B.pack $
+                  (if Utils.isRegistered joiningClientInfo then "u" else "") ++
+                  (if isAdministrator joiningClientInfo then "a" else "") ++
+                  (if isContributor joiningClientInfo then "c" else "")
+
+    roomClientIndices <- io $ roomClientsIndicesM rnc roomIdToJoin
+    allRoomClientInfos <- fmap catMaybes $ mapM (io . client'sM rnc (Just . id)) roomClientIndices
+    let visibleExistingRoomClients = filter (\ci -> isVisible ci && clUID ci /= clUID joiningClientInfo) allRoomClientInfos
+
+    -- Broadcast joining client's details to existing room clients
+    forM_ visibleExistingRoomClients $ \existingClient -> do
+        processAction $ AnswerClients [sendChan existingClient] ["PLAYER_DETAILS", jcNick, jcIpHash, jcFlags]
+
+    -- Send existing room clients' details to the joining client
+    forM_ visibleExistingRoomClients $ \existingClient -> do
+        let ecNick = nick existingClient
+        let ecIpHash = case ipHash existingClient of
+                           Just hashText -> TE.encodeUtf8 hashText
+                           Nothing -> B.empty
+        let ecFlags = B.pack $
+                      (if Utils.isRegistered existingClient then "u" else "") ++
+                      (if isAdministrator existingClient then "a" else "") ++
+                      (if isContributor existingClient then "c" else "")
+        processAction $ AnswerClients [sendChan joiningClientInfo] ["PLAYER_DETAILS", ecNick, ecIpHash, ecFlags]
+
+    -- Send joining client their own details
+    processAction $ AnswerClients [sendChan joiningClientInfo] ["PLAYER_DETAILS", jcNick, jcIpHash, jcFlags]
+
+    -- Original CLIENT_FLAGS logic
+    allVisClientsServer <- liftM (filter isVisible) allClientsS -- Renamed to avoid clash
+    let allVisChansServer = map sendChan allVisClientsServer
+
+    when (oldRoomId /= lobbyId && oldRoomId /= roomIdToJoin) $ -- If moving from another room (not lobby)
+        processAction $ AnswerClients allVisChansServer ["CLIENT_FLAGS", "-i", jcNick] -- Indicate left old room status
+
+    processAction $ AnswerClients allVisChansServer ["CLIENT_FLAGS", "+i", jcNick] -- Indicate in new room status
+
+    processAction $ RegisterEvent RoomJoin
+    -- The old "JOINED" message seems covered by PLAYER_DETAILS exchanges.
 
 
 processAction (MoveToLobby msg) = do
@@ -527,42 +567,62 @@ processAction (ProcessAccountInfo info) = do
             ]
 
 processAction JoinLobby = do
-    chan <- client's sendChan
+    (Just newClientId) <- gets clientIndex
     rnc <- gets roomsClients
-    clientNick <- client's nick
-    clProto <- client's clientProto
-    isAuthenticated <- client's isRegistered
-    isAdmin <- client's isAdministrator
-    isContr <- client's isContributor
-    loggedInClients <- liftM (Prelude.filter isVisible) $! allClientsS
-    let (lobbyNicks, clientsChans) = unzip . L.map (nick &&& sendChan) $ loggedInClients
-    let authenticatedNicks = L.map nick . L.filter isRegistered $ loggedInClients
-    let adminsNicks = L.map nick . L.filter isAdministrator $ loggedInClients
-    let contrNicks = L.map nick . L.filter isContributor $ loggedInClients
-    inRoomNicks <- io $
-        allClientsM rnc
-        >>= filterM (liftM ((/=) lobbyId) . clientRoomM rnc)
-        >>= mapM (client'sM rnc nick)
-    let clFlags = B.concat . L.concat $ [["u" | isAuthenticated], ["a" | isAdmin], ["c" | isContr]]
+    newClientInfo <- io $ client'sM rnc id newClientId
 
-    roomsInfoList <- io $ do
-        rooms <- roomsM rnc
-        mapM (\r -> (mapM (client'sM rnc id) $ masterID r)
-            >>= \cn -> return $ roomInfo clProto (maybeNick cn) r)
-            $ filter ((/=) 0 . roomProto) rooms
+    let ncNick = nick newClientInfo
+    let ncIpHash = case ipHash newClientInfo of
+                       Just hashText -> TE.encodeUtf8 hashText
+                       Nothing -> B.empty
+    let ncFlags = B.pack $
+                  (if Utils.isRegistered newClientInfo then "u" else "") ++
+                  (if isAdministrator newClientInfo then "a" else "") ++
+                  (if isContributor newClientInfo then "c" else "")
 
-    mapM_ processAction . concat $ [
-        [AnswerClients clientsChans ["LOBBY:JOINED", clientNick]]
-        , [AnswerClients [chan] ("LOBBY:JOINED" : clientNick : lobbyNicks)]
-        , [AnswerClients [chan] ("CLIENT_FLAGS" : "+u" : authenticatedNicks) | not $ null authenticatedNicks]
-        , [AnswerClients [chan] ("CLIENT_FLAGS" : "+a" : adminsNicks) | not $ null adminsNicks]
-        , [AnswerClients [chan] ("CLIENT_FLAGS" : "+c" : contrNicks) | not $ null contrNicks]
-        , [AnswerClients [chan] ("CLIENT_FLAGS" : "+i" : inRoomNicks) | not $ null inRoomNicks]
-        , [AnswerClients (chan : clientsChans) ["CLIENT_FLAGS",  B.concat["+" , clFlags], clientNick] | not $ B.null clFlags]
-        , [ModifyClient (\cl -> cl{logonPassed = True, isVisible = True})]
-        , [SendServerMessage]
-        , [AnswerClients [chan] ("ROOMS" : concat roomsInfoList)]
-        ]
+    lobbyClientIndices <- io $ roomClientsIndicesM rnc lobbyId
+    allLobbyClientInfos <- fmap catMaybes $ mapM (io . client'sM rnc (Just . id)) lobbyClientIndices
+    let visibleExistingLobbyClients = filter (\ci -> isVisible ci && clUID ci /= clUID newClientInfo) allLobbyClientInfos
+
+    -- Broadcast new client's details to existing lobby clients
+    forM_ visibleExistingLobbyClients $ \existingClient -> do
+        processAction $ AnswerClients [sendChan existingClient] ["PLAYER_DETAILS", ncNick, ncIpHash, ncFlags]
+
+    -- Send existing lobby clients' details to the new client
+    forM_ visibleExistingLobbyClients $ \existingClient -> do
+        let ecNick = nick existingClient
+        let ecIpHash = case ipHash existingClient of
+                           Just hashText -> TE.encodeUtf8 hashText
+                           Nothing -> B.empty
+        let ecFlags = B.pack $
+                      (if Utils.isRegistered existingClient then "u" else "") ++
+                      (if isAdministrator existingClient then "a" else "") ++
+                      (if isContributor existingClient then "c" else "")
+        processAction $ AnswerClients [sendChan newClientInfo] ["PLAYER_DETAILS", ecNick, ecIpHash, ecFlags]
+
+    -- Send new client their own details
+    processAction $ AnswerClients [sendChan newClientInfo] ["PLAYER_DETAILS", ncNick, ncIpHash, ncFlags]
+
+    -- Original JoinLobby logic continuation (adapted)
+    processAction $ ModifyClient (\cl -> cl{logonPassed = True, isVisible = True}) -- Apply to current client context (newClientInfo)
+    processAction SendServerMessage
+
+    newClientProto <- client's clientProto -- This will use the current client context (newClientInfo)
+    let currentAdminStatus = isAdministrator newClientInfo
+    activeRooms <- io $ roomsM rnc
+    roomsInfoList <- io $ mapM (\r -> (mapM (client'sM rnc id) $ masterID r)
+        >>= \masterCI -> return $ roomInfo newClientProto (Utils.maybeNick masterCI) r)
+        (filter (\r -> roomProto r /= 0 && (not (isSpecial r) || currentAdminStatus)) activeRooms)
+    processAction $ AnswerClients [sendChan newClientInfo] ("ROOMS" : concat roomsInfoList)
+
+    -- This part sends CLIENT_FLAGS, which might be partially redundant with PLAYER_DETAILS flags but kept for compatibility
+    allVisClients <- liftM (filter isVisible) allClientsS -- All visible clients in the server
+    let allVisChans = map sendChan allVisClients
+    when (not (B.null ncFlags)) $ -- ncFlags are for the new client
+        processAction $ AnswerClients allVisChans ["CLIENT_FLAGS", B.cons '+' ncFlags, ncNick]
+
+    -- The old LOBBY:JOINED broadcast seems covered by PLAYER_DETAILS exchanges for individual clients.
+    -- The old logic of sending full lists of nicks etc. to the new client is also covered by individual PLAYER_DETAILS.
 
 
 processAction (KickClient kickId) = do
