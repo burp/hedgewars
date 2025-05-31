@@ -31,6 +31,7 @@ import Control.Exception
 import Data.Typeable
 import Data.TConfig
 import Control.DeepSeq
+import qualified Data.Text as T -- Added for T.Text
 -----------------------
 import RoomsAndClients
 
@@ -159,7 +160,8 @@ data ClientInfo =
         eiJoin :: !EventsInfo,
         teamsInGame :: !Word,
         teamIndexes :: ![Word8],
-        pendingActions :: ![Action]
+        pendingActions :: ![Action],
+        ipHash :: !(Maybe T.Text)      -- New field for the server-computed IP hash
     }
 
 instance Eq ClientInfo where
@@ -304,27 +306,33 @@ data ServerInfo =
         coreChan :: Chan CoreMessage,
         dbQueries :: Chan DBQuery,
         serverSocket :: Maybe Socket,
-        serverConfig :: Maybe Conf
+    serverConfig :: Maybe Conf,
+    serverWideSalt :: B.ByteString -- New field for the server-wide salt
     }
 
 
 newServerInfo :: Chan CoreMessage -> Chan DBQuery -> Maybe Socket -> Maybe Conf -> ServerInfo
-newServerInfo =
+newServerInfo coreChan dbQueries serverSocket sconf =
     ServerInfo
-        True
-        False
-        "<h2><p align=center><a href=\"https://www.hedgewars.org/\">https://www.hedgewars.org/</a></p></h2>"
-        "<font color=yellow><h3 align=center>Hedgewars 1.0.0 is out! Please update.</h3><p align=center><a href=https://hedgewars.org/download.html>Download page here</a></font>"
+        True -- isDedicated
+        False -- isRegisteredUsersOnly
+        "<h2><p align=center><a href=\"https://www.hedgewars.org/\">https://www.hedgewars.org/</a></p></h2>" -- serverMessage
+        "<font color=yellow><h3 align=center>Hedgewars 1.0.0 is out! Please update.</h3><p align=center><a href=https://hedgewars.org/download.html>Download page here</a></font>" -- serverMessageForOldVersions
         59 -- latestReleaseVersion
         41 -- earliestCompatibleVersion
-        46631
-        ""
-        ""
-        ""
-        ""
-        []
-        False
-        []
+        46631 -- listenPort
+        "" -- dbHost
+        "" -- dbName
+        "" -- dbLogin
+        "" -- dbPassword
+        [] -- bans
+        False -- shutdownPending
+        [] -- runArgs
+        coreChan -- coreChan
+        dbQueries -- dbQueries
+        serverSocket -- serverSocket
+        sconf -- serverConfig
+        B.empty -- serverWideSalt
 
 data Voting = Voting {
         voteTTL :: Int,

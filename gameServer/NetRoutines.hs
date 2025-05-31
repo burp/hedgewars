@@ -24,62 +24,65 @@ import Control.Concurrent.Chan
 import Data.Time
 import Control.Monad
 import Data.Unique
-import qualified Codec.Binary.Base64 as Base64
+import qualified Codec.Binary.Base64 as Base64 -- This was correct
 import qualified Control.Exception as E
 import System.Entropy
 -----------------------------
 import CoreTypes
 import Utils
+import Hashing (hashAddress) -- For IP hashing
+import qualified Data.Text as T -- For ipHash type
+import qualified Data.ByteString.Char8 as B -- For B.ByteString type of salt
 
 
-acceptLoop :: Socket -> Chan CoreMessage -> IO ()
-acceptLoop servSock chan = E.bracket openHandle closeHandle (forever . f)
+acceptLoop :: Socket -> B.ByteString -> Chan CoreMessage -> IO () -- Added B.ByteString for serverSaltGlobal
+acceptLoop servSock serverSaltGlobal coreMessageChan = E.bracket openHandle closeHandle (forever . f) -- Renamed 'chan'
     where
     f ch = E.try (Network.Socket.accept servSock) >>= \v -> case v of
       Left (e :: E.IOException) -> return ()
       Right (sock, sockAddr) -> do
         clientHost <- sockAddr2String sockAddr
-
         currentTime <- getCurrentTime
-
         sendChan' <- newChan
-
         uid <- newUnique
-        salt <- liftM Base64.encode $ hGetEntropy ch 18
+        clientSpecificSalt <- liftM Base64.encode $ hGetEntropy ch 18 -- Renamed for clarity
 
-        let newClient =
-                (ClientInfo
-                    uid
-                    sendChan'
-                    sock
-                    clientHost
-                    currentTime
-                    ""
-                    ""
-                    salt
-                    False
-                    False
-                    0
-                    0
-                    False
-                    False
-                    False
-                    False
-                    False
-                    False
-                    False
-                    False
-                    False
-                    False
-                    Nothing
-                    Nothing
-                    newEventsInfo
-                    newEventsInfo
-                    newEventsInfo
-                    0
-                    []
-                    []
-                    )
+        -- Hash the IP address
+        maybeHashedIp <- hashAddress serverSaltGlobal sockAddr -- Use the passed server-wide salt
 
-        writeChan chan $ Accept newClient
+        let newClient = ClientInfo {
+                clUID = uid,
+                sendChan = sendChan',
+                clientSocket = sock,
+                host = clientHost,             -- Store raw IP for now, server-internal use only
+                connectTime = currentTime,
+                nick = "",                     -- Empty string
+                webPassword = "",              -- Empty string
+                serverSalt = clientSpecificSalt, -- This is the client-specific one from 'salt'
+                logonPassed = False,
+                isVisible = False,
+                clientProto = 0,
+                pingsQueue = 0,
+                isMaster = False,
+                isReady = False,
+                isInGame = False,
+                isAdministrator = False,
+                hasSuperPower = False,
+                isChecker = False,
+                isContributor = False,
+                isKickedFromServer = False,
+                isJoinedMidGame = False,
+                hasAskedList = False,
+                clientClan = Nothing,
+                checkInfo = Nothing,
+                eiLobbyChat = newEventsInfo,
+                eiEM = newEventsInfo,
+                eiJoin = newEventsInfo,
+                teamsInGame = 0,
+                teamIndexes = [],
+                pendingActions = [],
+                ipHash = maybeHashedIp         -- Populate new field
+            }
+
+        writeChan coreMessageChan $ Accept newClient -- Use renamed coreMessageChan
         return ()

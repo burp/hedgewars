@@ -33,6 +33,7 @@
 #include <QMenu>
 #include <QScrollBar>
 #include <QMimeData>
+#include <QMessageBox> // Required for QMessageBox
 
 #include "DataManager.h"
 #include "hwconsts.h"
@@ -282,6 +283,17 @@ HWChatWidget::HWChatWidget(QWidget* parent, bool notify) :
     acIgnore->setIcon(QIcon(":/res/ignore.png"));
     acIgnore->setData(QVariant(true));
     connect(acIgnore, SIGNAL(triggered(bool)), this, SLOT(onIgnore()));
+
+    acIgnoreIp = new QAction(tr("Ignore IP Hash"), chatNicks); // Text updated
+    acIgnoreIp->setIcon(QIcon(":/res/ignore_ip.png")); // Placeholder: Add a new icon resource
+    acIgnoreIp->setData(QVariant(true)); // Similar to acIgnore, often available
+    connect(acIgnoreIp, SIGNAL(triggered(bool)), this, SLOT(onIgnoreIp()));
+
+    acShowUsersByIp = new QAction(tr("Show Users by IP Hash"), chatNicks); // Text updated
+    // Add an icon if desired, e.g., QIcon(":/res/users_ip.png") - placeholder
+    acShowUsersByIp->setData(QVariant(false)); // Typically available when a user is selected and online
+    connect(acShowUsersByIp, SIGNAL(triggered(bool)), this, SLOT(onShowUsersByIp()));
+
     acFriend = new QAction(QAction::tr("Add friend"), chatNicks);
     acFriend->setIcon(QIcon(":/res/addfriend.png"));
     acFriend->setData(QVariant(true));
@@ -290,6 +302,61 @@ HWChatWidget::HWChatWidget(QWidget* parent, bool notify) :
     chatNicks->insertAction(0, acFriend);
     chatNicks->insertAction(0, acInfo);
     chatNicks->insertAction(0, acIgnore);
+    // Insert acIgnoreIp preferably next to acIgnore.
+    // Since actions are prepended (insertAction(0, ...)), to place IgnoreIP after Ignore:
+    // 1. Ignore is added.
+    // 2. IgnoreIP is added before Ignore.
+    // So, to have Ignore then IgnoreIP, we add IgnoreIP first, then Ignore.
+    // However, the existing code adds acIgnore, then acInfo, then acFriend using insertAction(0,...)
+    // This means the order in menu would be Ignore, Info, Friend if added sequentially.
+    // Let's find acIgnore and insert acIgnoreIp after it.
+    QList<QAction*> actions = chatNicks->actions();
+    int ignoreActionIndex = actions.indexOf(acIgnore);
+    if (ignoreActionIndex != -1) {
+        // If acIgnore is present, insert acIgnoreIp after it.
+        // Note: QWidget::insertAction(before, action) inserts action before 'before'.
+        // To insert after, if 'before' is the last action, we can simply add.
+        // Or, find the action *after* 'before' and insert there.
+        if (ignoreActionIndex + 1 < actions.size()) {
+            chatNicks->insertAction(actions.at(ignoreActionIndex + 1), acIgnoreIp);
+        } else {
+            chatNicks->addAction(acIgnoreIp); // Add to end if acIgnore is last
+        }
+    } else {
+         chatNicks->insertAction(0, acIgnoreIp); // Fallback, add at the beginning
+    }
+
+    // Example: insert after acIgnoreIp if it exists, or after acInfo
+    if (chatNicks->actions().contains(acIgnoreIp)) {
+        // Find acIgnoreIp and insert acShowUsersByIp after it
+        actions = chatNicks->actions(); // Re-fetch actions list
+        int ignoreIpActionIndex = actions.indexOf(acIgnoreIp);
+        if (ignoreIpActionIndex != -1) {
+            if (ignoreIpActionIndex + 1 < actions.size()) {
+                chatNicks->insertAction(actions.at(ignoreIpActionIndex + 1), acShowUsersByIp);
+            } else {
+                chatNicks->addAction(acShowUsersByIp);
+            }
+        } else {  // Should not happen if contains check passed but as a safeguard
+            chatNicks->insertAction(0, acShowUsersByIp);
+        }
+    } else if (chatNicks->actions().contains(acInfo)) {
+        // Find acInfo and insert acShowUsersByIp after it
+        actions = chatNicks->actions(); // Re-fetch actions list
+        int infoActionIndex = actions.indexOf(acInfo);
+         if (infoActionIndex != -1) {
+            if (infoActionIndex + 1 < actions.size()) {
+                chatNicks->insertAction(actions.at(infoActionIndex + 1), acShowUsersByIp);
+            } else {
+                chatNicks->addAction(acShowUsersByIp);
+            }
+        } else { // Should not happen
+            chatNicks->insertAction(0, acShowUsersByIp);
+        }
+    } else {
+        chatNicks->insertAction(0, acShowUsersByIp); // Fallback
+    }
+
 
     setShowFollow(true);
 
@@ -429,6 +496,14 @@ void HWChatWidget::printChatString(
     // don't show chat lines that are from ignored nicks
     if (m_usersModel->isFlagSet(nick, PlayersListModel::Ignore))
         return;
+
+    // New IP ignore check:
+    QString playerIpHash = m_usersModel->getPlayerIpHash(nick); // Get server-provided hash
+    if (!playerIpHash.isEmpty() && m_usersModel->isIpIgnored(playerIpHash)) {
+        // Optional: Maybe a different message or just silently ignore
+        // displayNotice(tr("Message from %1 (IP ignored) was blocked.").arg(nick));
+        return;
+    }
 
     bool isFriend = (!nick.isEmpty()) && m_usersModel->isFlagSet(nick, PlayersListModel::Friend);
 
@@ -618,13 +693,22 @@ void HWChatWidget::clear()
 
 void HWChatWidget::onPlayerInfo(
             const QString & nick,
-            const QString & ip,
+            const QString & ip, // This 'ip' parameter is now assumed to be ipHash
             const QString & version,
             const QString & roomInfo)
 {
-    addLine("msg_PlayerInfo", QString(" >>> %1 - <span class=\"ipaddress\">%2</span> <span class=\"version\">%3</span> <span class=\"location\">%4</span>")
+    // New way: 'ip' parameter is now ipHash
+    QString ipHash_onPlayerInfo = ip; // Assuming 'ip' param now carries the hash
+    if (ipHash_onPlayerInfo == "[]") { // Server might send "[]" if hash is unavailable/not applicable
+        ipHash_onPlayerInfo.clear();
+    }
+    if (m_usersModel) {
+        m_usersModel->storePlayerIpHash(nick, ipHash_onPlayerInfo);
+    }
+
+    // New (remove IP/Hash display for privacy, or decide if showing hash is useful):
+    addLine("msg_PlayerInfo", QString(" >>> %1 - <span class=\"version\">%2</span> <span class=\"location\">%3</span>")
         .arg(linkedNick(nick))
-        .arg(QString(ip == "[]"?"":ip).toHtmlEscaped())
         .arg(version.toHtmlEscaped())
         .arg(roomInfo.toHtmlEscaped())
     );
@@ -710,6 +794,66 @@ void HWChatWidget::onIgnore()
         chatNicks->scrollTo(chatNicks->selectionModel()->selectedRows()[0]);
 }
 
+void HWChatWidget::onIgnoreIp()
+{
+    QModelIndexList mil = chatNicks->selectionModel()->selectedRows();
+    QString nick;
+    if (mil.size())
+        nick = mil[0].data().toString();
+    else
+        nick = m_clickedNick; // Fallback if no selection but context menu was on a nick
+
+    if (nick.isEmpty() || !m_usersModel)
+        return;
+
+    QString playerIpHash_onIgnore = m_usersModel->getPlayerIpHash(nick); // Get server-provided hash
+
+    if (playerIpHash_onIgnore.isEmpty()) {
+        displayWarning(tr("Cannot ignore by IP Hash: IP Hash for %1 is not known.").arg(linkedNick(nick)));
+        return;
+    }
+
+    bool isCurrentlyIgnored = m_usersModel->isIpIgnored(playerIpHash_onIgnore);
+    // setFlag will use the nickname to find the player, then internally use the stored hash for IgnoreIP operations
+    m_usersModel->setFlag(nick, PlayersListModel::IgnoreIP, !isCurrentlyIgnored);
+
+    if (!isCurrentlyIgnored) {
+        displayNotice(tr("IP Hash of %1 has been added to your ignore list.").arg(linkedNick(nick)));
+    } else {
+        displayNotice(tr("IP Hash of %1 has been removed from your ignore list.").arg(linkedNick(nick)));
+    }
+
+    // Optional: if selection model is used, update it
+    // if(mil.size())
+    //    chatNicks->scrollTo(chatNicks->selectionModel()->selectedRows()[0]);
+}
+
+void HWChatWidget::onShowUsersByIp()
+{
+    QModelIndexList mil = chatNicks->selectionModel()->selectedRows();
+    QString nick;
+    if (mil.size())
+        nick = mil[0].data().toString();
+    else
+        nick = m_clickedNick; // Fallback
+
+    if (nick.isEmpty() || !m_usersModel)
+        return;
+
+    // getUsersByPlayerName now correctly uses hashes internally
+    QStringList usersFromSameIpHash = m_usersModel->getUsersByPlayerName(nick);
+
+    if (usersFromSameIpHash.isEmpty()) {
+        // This case should ideally not happen if the source 'nick' is valid and has an IP,
+        // unless they are the only one from that IP or IP is not known.
+        QMessageBox::information(this, tr("Users by IP Hash"), tr("No other users found sharing the same IP Hash as %1, or IP Hash is unknown.").arg(linkedNick(nick)));
+    } else {
+        QString message = tr("Users sharing the same IP Hash as %1:\n\n%2")
+                            .arg(linkedNick(nick))
+                            .arg(usersFromSameIpHash.join(tr(", ")));
+        QMessageBox::information(this, tr("Users by IP Hash"), message);
+    }
+}
 void HWChatWidget::onFriend()
 {
     QModelIndexList mil = chatNicks->selectionModel()->selectedRows();
@@ -954,6 +1098,23 @@ void HWChatWidget::nicksContextMenuRequested(const QPoint &pos)
         acIgnore->setIcon(QIcon(":/res/ignore.png"));
         acIgnore->setVisible(!isSelf);
     }
+
+    QString playerIpHash_context = players->getPlayerIpHash(nick); // Get server-provided hash
+    bool ipHashKnown = !playerIpHash_context.isEmpty();
+
+    // For acIgnoreIp
+    acIgnoreIp->setVisible(!isSelf && ipHashKnown);
+    if (ipHashKnown && players->isIpIgnored(playerIpHash_context)) {
+        acIgnoreIp->setText(tr("Unignore IP Hash"));
+        // acIgnoreIp->setIcon(QIcon(":/res/unignore_ip.png")); // Placeholder
+    } else {
+        acIgnoreIp->setText(tr("Ignore IP Hash"));
+        // acIgnoreIp->setIcon(QIcon(":/res/ignore_ip.png")); // Placeholder
+    }
+
+    // For acShowUsersByIp
+    acShowUsersByIp->setVisible(ipHashKnown); // Show if hash is known, can be self.
+    acShowUsersByIp->setText(tr("Show Users by IP Hash"));
 
     if(players->isFlagSet(nick, PlayersListModel::Friend))
     {

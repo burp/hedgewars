@@ -23,6 +23,8 @@ import Control.Monad
 import Control.Monad.Reader
 import Data.Maybe
 import qualified Data.ByteString.Char8 as B
+import qualified Data.Text as T -- Added for T.Text
+import qualified Data.Text.Encoding as TE -- Added for TE.encodeUtf8
 --------------------------------------
 import CoreTypes
 import HWProtoNEState
@@ -139,31 +141,43 @@ handleCmd_loggedin ["CMD", parameters] = uncurry h $ extractParameters parameter
         extractParameters p = let (a, b) = B.break (== ' ') p in (upperCase a, B.dropWhile (== ' ') b)
 
 handleCmd_loggedin ["INFO", asknick] = do
-    (_, rnc) <- ask
-    maybeClientId <- clientByNick asknick
-    isAdminAsking <- liftM isAdministrator thisClient
-    let noSuchClient = isNothing maybeClientId
-    let clientId = fromJust maybeClientId
-    let cl = rnc `client` fromJust maybeClientId
-    let roomId = clientRoom rnc clientId
-    let clRoom = room rnc roomId
-    let roomMasterSign = if isMaster cl then "+" else ""
-    let adminSign = if isAdministrator cl then "@" else ""
-    let rInfo = if roomId /= lobbyId then B.concat [adminSign, roomMasterSign, loc "room", " ", name clRoom] else adminSign `B.append` (loc "lobby")
-    let roomStatus = if isJust $ gameInfo clRoom then
-            if teamsInGame cl > 0 then (loc "(playing)") else (loc "(spectating)")
-            else
-            ""
-    let hostStr = if isAdminAsking then host cl else B.empty
-    if noSuchClient then
+    (_, rnc) <- ask -- We need rnc to get client and room info
+    -- isAdminAsking is removed as IP Hash will always be sent (or empty if unavailable)
+    -- _ <- liftM isAdministrator thisClient -- If thisClient was only for isAdminAsking, it might be removable or used for other purposes.
+
+    maybeTargetClientId <- clientByNick asknick
+    if isNothing maybeTargetClientId then
         answerClient [ "CHAT", nickServer, loc "Player is not online." ]
-        else
+    else do
+        let targetClientId = fromJust maybeTargetClientId
+        let targetClientInfo = rnc `client` targetClientId -- targetClientInfo is the ClientInfo record
+
+        let targetRoomId = clientRoom rnc targetClientId
+        let targetClientRoomInfo = room rnc targetRoomId
+
+        let roomMasterSign = if isMaster targetClientInfo then "+" else ""
+        let adminSign = if isAdministrator targetClientInfo then "@" else ""
+        let roomIdentifierText = if targetRoomId /= lobbyId
+                           then B.concat [adminSign, roomMasterSign, loc "room", " ", name targetClientRoomInfo]
+                           else adminSign `B.append` loc "lobby"
+
+        let roomGameStatusText = if isJust $ gameInfo targetClientRoomInfo then
+                if teamsInGame targetClientInfo > 0 then (loc "(playing)") else (loc "(spectating)")
+                else
+                B.empty
+
+        -- Prepare the IP Hash string to be sent
+        -- ipHash field in targetClientInfo is (Maybe T.Text)
+        let finalIpHashDisplayStr = case ipHash targetClientInfo of
+                                  Just hashText -> TE.encodeUtf8 hashText -- Convert Text to ByteString
+                                  Nothing -> B.empty       -- Send empty if hash is not available
+
         answerClient [
             "INFO",
-            nick cl,
-            B.concat ["[", hostStr, "]"],
-            protoNumber2ver $ clientProto cl,
-            B.concat ["[", rInfo, "]", roomStatus]
+            nick targetClientInfo,
+            B.concat ["[", finalIpHashDisplayStr, "]"], -- Send the IP Hash (or empty) within brackets
+            protoNumber2ver $ clientProto targetClientInfo,
+            B.concat ["[", roomIdentifierText, "]", roomGameStatusText]
             ]
 
 

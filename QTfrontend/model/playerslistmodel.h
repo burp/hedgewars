@@ -22,9 +22,14 @@ public:
         Ignore      = Qt::UserRole + 5,
         InGame      = Qt::UserRole + 6,
         InRoom      = Qt::UserRole + 7,
-        Contributor = Qt::UserRole + 8
+        Contributor = Qt::UserRole + 8,
+	IgnoreIP    = Qt::UserRole + 9 // New flag
         // if you add a role that will affect the player icon,
         // then also add it to the flags Qlist in updateIcon()!
+    };
+
+    enum PlayerDataRole {
+        IpAddressRole = Qt::UserRole + 200
     };
 
     enum SpecialRoles {
@@ -40,6 +45,11 @@ public:
     bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::DisplayRole);
     void setFlag(const QString & nickname, StateFlag flagType, bool isSet);
     bool isFlagSet(const QString & nickname, StateFlag flagType);
+    bool isIpIgnored(const QString & ipHash) const; // Parameter changed from ipAddress to ipHash
+    void storePlayerIpHash(const QString& nickname, const QString& ipHash); // Renamed from storePlayerIp
+    QString getPlayerIpHash(const QString& nickname) const; // Renamed from getPlayerIp
+    QStringList getUsersByIpHash(const QString& ipHash) const;
+    QStringList getUsersByPlayerName(const QString& playerName) const; // Helper to get users by name, then their IP hash for the main feature
 
     bool insertRow(int row, const QModelIndex &parent = QModelIndex());
     bool insertRows(int row, int count, const QModelIndex &parent = QModelIndex());
@@ -69,6 +79,9 @@ private:
     QSet<QString> m_friendsSet, m_ignoredSet;
     QString m_nickname;
     QFont m_fontInRoom;
+    QSet<QString> m_ignoredIpHashes;
+    // QString m_salt; // Removed
+    QHash<QString, QString> m_playerIpMap; // To store IP HASH for nicknames
 
     void updateIcon(const QModelIndex & index);
     void updateSortData(const QModelIndex & index);
@@ -77,6 +90,12 @@ private:
     void checkFriendIgnore(const QModelIndex & mi);
     bool isFriend(const QString & nickname);
     bool isIgnored(const QString & nickname);
+    // void initSalt(); // Removed
+    // QString getSaltedIpHash(const QString& ipAddress) const; // Removed
+    void loadIgnoredIpHashes();
+    void saveIgnoredIpHashes() const;
+    // void loadPlayerIpMap(); // If we need to persist it, for now manage in memory
+    // void savePlayerIpMap() const;
 };
 
 #endif // PLAYERSLISTMODEL_H

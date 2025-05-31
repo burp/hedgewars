@@ -149,6 +149,8 @@ class HWChatWidget : public QWidget
         QAction * acFollow;
         QAction * acIgnore;
         QAction * acFriend;
+    QAction * acIgnoreIp; // New action
+    QAction *acShowUsersByIp; // New action
         QSettings * gameSettings;
         QMenu * m_nicksMenu;
         QStringList m_helloSounds;
@@ -170,6 +172,8 @@ class HWChatWidget : public QWidget
         void onFollow();
         void onIgnore();
         void onFriend();
+    void onIgnoreIp(); // New slot
+    void onShowUsersByIp(); // New slot
         void chatNickDoubleClicked(const QModelIndex & index);
         void linkClicked(const QUrl & link);
         void nicksContextMenuRequested(const QPoint & pos);
