@@ -284,12 +284,12 @@ HWChatWidget::HWChatWidget(QWidget* parent, bool notify) :
     acIgnore->setData(QVariant(true));
     connect(acIgnore, SIGNAL(triggered(bool)), this, SLOT(onIgnore()));
 
-    acIgnoreIp = new QAction(tr("Ignore IP"), chatNicks); // Or "Ignore by IP"
+    acIgnoreIp = new QAction(tr("Ignore IP Hash"), chatNicks); // Text updated
     acIgnoreIp->setIcon(QIcon(":/res/ignore_ip.png")); // Placeholder: Add a new icon resource
     acIgnoreIp->setData(QVariant(true)); // Similar to acIgnore, often available
     connect(acIgnoreIp, SIGNAL(triggered(bool)), this, SLOT(onIgnoreIp()));
 
-    acShowUsersByIp = new QAction(tr("Show Users from this IP"), chatNicks);
+    acShowUsersByIp = new QAction(tr("Show Users by IP Hash"), chatNicks); // Text updated
     // Add an icon if desired, e.g., QIcon(":/res/users_ip.png") - placeholder
     acShowUsersByIp->setData(QVariant(false)); // Typically available when a user is selected and online
     connect(acShowUsersByIp, SIGNAL(triggered(bool)), this, SLOT(onShowUsersByIp()));
@@ -498,8 +498,8 @@ void HWChatWidget::printChatString(
         return;
 
     // New IP ignore check:
-    QString playerIp_print = m_usersModel->getPlayerIp(nick);
-    if (!playerIp_print.isEmpty() && m_usersModel->isIpIgnored(playerIp_print)) {
+    QString playerIpHash = m_usersModel->getPlayerIpHash(nick); // Get server-provided hash
+    if (!playerIpHash.isEmpty() && m_usersModel->isIpIgnored(playerIpHash)) {
         // Optional: Maybe a different message or just silently ignore
         // displayNotice(tr("Message from %1 (IP ignored) was blocked.").arg(nick));
         return;
@@ -693,21 +693,22 @@ void HWChatWidget::clear()
 
 void HWChatWidget::onPlayerInfo(
             const QString & nick,
-            const QString & ip,
+            const QString & ip, // This 'ip' parameter is now assumed to be ipHash
             const QString & version,
             const QString & roomInfo)
 {
-    if (m_usersModel) {
-        // Ensure to handle cases where IP might be empty or invalid (e.g. "[]")
-        QString actualIp = ip;
-        if (actualIp == "[]") {
-            actualIp.clear(); // Store as empty if server sends "[]"
-        }
-        m_usersModel->storePlayerIp(nick, actualIp);
+    // New way: 'ip' parameter is now ipHash
+    QString ipHash_onPlayerInfo = ip; // Assuming 'ip' param now carries the hash
+    if (ipHash_onPlayerInfo == "[]") { // Server might send "[]" if hash is unavailable/not applicable
+        ipHash_onPlayerInfo.clear();
     }
-    addLine("msg_PlayerInfo", QString(" >>> %1 - <span class=\"ipaddress\">%2</span> <span class=\"version\">%3</span> <span class=\"location\">%4</span>")
+    if (m_usersModel) {
+        m_usersModel->storePlayerIpHash(nick, ipHash_onPlayerInfo);
+    }
+
+    // New (remove IP/Hash display for privacy, or decide if showing hash is useful):
+    addLine("msg_PlayerInfo", QString(" >>> %1 - <span class=\"version\">%2</span> <span class=\"location\">%3</span>")
         .arg(linkedNick(nick))
-        .arg(QString(ip == "[]"?"":ip).toHtmlEscaped())
         .arg(version.toHtmlEscaped())
         .arg(roomInfo.toHtmlEscaped())
     );
@@ -805,20 +806,21 @@ void HWChatWidget::onIgnoreIp()
     if (nick.isEmpty() || !m_usersModel)
         return;
 
-    QString playerIp = m_usersModel->getPlayerIp(nick);
+    QString playerIpHash_onIgnore = m_usersModel->getPlayerIpHash(nick); // Get server-provided hash
 
-    if (playerIp.isEmpty()) {
-        displayWarning(tr("Cannot ignore IP: IP address for %1 is not known.").arg(linkedNick(nick)));
+    if (playerIpHash_onIgnore.isEmpty()) {
+        displayWarning(tr("Cannot ignore by IP Hash: IP Hash for %1 is not known.").arg(linkedNick(nick)));
         return;
     }
 
-    bool isCurrentlyIgnored = m_usersModel->isIpIgnored(playerIp);
-    m_usersModel->setFlag(nick, PlayersListModel::IgnoreIP, !isCurrentlyIgnored); // Toggle
+    bool isCurrentlyIgnored = m_usersModel->isIpIgnored(playerIpHash_onIgnore);
+    // setFlag will use the nickname to find the player, then internally use the stored hash for IgnoreIP operations
+    m_usersModel->setFlag(nick, PlayersListModel::IgnoreIP, !isCurrentlyIgnored);
 
     if (!isCurrentlyIgnored) {
-        displayNotice(tr("IP address of %1 (%2) has been added to your ignore list.").arg(linkedNick(nick)).arg(playerIp));
+        displayNotice(tr("IP Hash of %1 has been added to your ignore list.").arg(linkedNick(nick)));
     } else {
-        displayNotice(tr("IP address of %1 (%2) has been removed from your ignore list.").arg(linkedNick(nick)).arg(playerIp));
+        displayNotice(tr("IP Hash of %1 has been removed from your ignore list.").arg(linkedNick(nick)));
     }
 
     // Optional: if selection model is used, update it
@@ -838,17 +840,18 @@ void HWChatWidget::onShowUsersByIp()
     if (nick.isEmpty() || !m_usersModel)
         return;
 
-    QStringList usersFromSameIp = m_usersModel->getUsersByPlayerName(nick);
+    // getUsersByPlayerName now correctly uses hashes internally
+    QStringList usersFromSameIpHash = m_usersModel->getUsersByPlayerName(nick);
 
-    if (usersFromSameIp.isEmpty()) {
+    if (usersFromSameIpHash.isEmpty()) {
         // This case should ideally not happen if the source 'nick' is valid and has an IP,
         // unless they are the only one from that IP or IP is not known.
-        QMessageBox::information(this, tr("Users from IP"), tr("No other users found from the same IP address as %1, or IP is unknown.").arg(linkedNick(nick)));
+        QMessageBox::information(this, tr("Users by IP Hash"), tr("No other users found sharing the same IP Hash as %1, or IP Hash is unknown.").arg(linkedNick(nick)));
     } else {
-        QString message = tr("Users logged in from the same IP address as %1:\n\n%2")
+        QString message = tr("Users sharing the same IP Hash as %1:\n\n%2")
                             .arg(linkedNick(nick))
-                            .arg(usersFromSameIp.join(tr(", ")));
-        QMessageBox::information(this, tr("Users from IP"), message);
+                            .arg(usersFromSameIpHash.join(tr(", ")));
+        QMessageBox::information(this, tr("Users by IP Hash"), message);
     }
 }
 void HWChatWidget::onFriend()
@@ -1096,26 +1099,22 @@ void HWChatWidget::nicksContextMenuRequested(const QPoint &pos)
         acIgnore->setVisible(!isSelf);
     }
 
-    QString playerIp_context = players->getPlayerIp(nick);
-    bool ipKnown = !playerIp_context.isEmpty();
-    acIgnoreIp->setVisible(!isSelf && ipKnown); // Only show if not self and IP is known
+    QString playerIpHash_context = players->getPlayerIpHash(nick); // Get server-provided hash
+    bool ipHashKnown = !playerIpHash_context.isEmpty();
 
-    if (ipKnown && players->isIpIgnored(playerIp_context)) {
-        acIgnoreIp->setText(tr("Unignore IP"));
-        // Optionally, a different icon for "Unignore IP"
+    // For acIgnoreIp
+    acIgnoreIp->setVisible(!isSelf && ipHashKnown);
+    if (ipHashKnown && players->isIpIgnored(playerIpHash_context)) {
+        acIgnoreIp->setText(tr("Unignore IP Hash"));
         // acIgnoreIp->setIcon(QIcon(":/res/unignore_ip.png")); // Placeholder
     } else {
-        acIgnoreIp->setText(tr("Ignore IP"));
+        acIgnoreIp->setText(tr("Ignore IP Hash"));
         // acIgnoreIp->setIcon(QIcon(":/res/ignore_ip.png")); // Placeholder
     }
 
-    QString playerIpForShow = players->getPlayerIp(nick);
-    bool ipKnownForShow = !playerIpForShow.isEmpty();
-
-    // Set visibility for acShowUsersByIp
-    // Only show if IP is known and perhaps not for self, or always show for self to see own alt accounts?
-    // For now, let's allow it for self too, to check for own other connections.
-    acShowUsersByIp->setVisible(ipKnownForShow);
+    // For acShowUsersByIp
+    acShowUsersByIp->setVisible(ipHashKnown); // Show if hash is known, can be self.
+    acShowUsersByIp->setText(tr("Show Users by IP Hash"));
 
     if(players->isFlagSet(nick, PlayersListModel::Friend))
     {

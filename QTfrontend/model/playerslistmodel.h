@@ -45,9 +45,9 @@ public:
     bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::DisplayRole);
     void setFlag(const QString & nickname, StateFlag flagType, bool isSet);
     bool isFlagSet(const QString & nickname, StateFlag flagType);
-    bool isIpIgnored(const QString & ipAddress) const;
-    void storePlayerIp(const QString& nickname, const QString& ipAddress);
-    QString getPlayerIp(const QString& nickname) const;
+    bool isIpIgnored(const QString & ipHash) const; // Parameter changed from ipAddress to ipHash
+    void storePlayerIpHash(const QString& nickname, const QString& ipHash); // Renamed from storePlayerIp
+    QString getPlayerIpHash(const QString& nickname) const; // Renamed from getPlayerIp
     QStringList getUsersByIpHash(const QString& ipHash) const;
     QStringList getUsersByPlayerName(const QString& playerName) const; // Helper to get users by name, then their IP hash for the main feature
 
@@ -80,8 +80,8 @@ private:
     QString m_nickname;
     QFont m_fontInRoom;
     QSet<QString> m_ignoredIpHashes;
-    QString m_salt;
-    QHash<QString, QString> m_playerIpMap; // To store IP for nicknames
+    // QString m_salt; // Removed
+    QHash<QString, QString> m_playerIpMap; // To store IP HASH for nicknames
 
     void updateIcon(const QModelIndex & index);
     void updateSortData(const QModelIndex & index);
@@ -90,8 +90,8 @@ private:
     void checkFriendIgnore(const QModelIndex & mi);
     bool isFriend(const QString & nickname);
     bool isIgnored(const QString & nickname);
-    void initSalt();
-    QString getSaltedIpHash(const QString& ipAddress) const;
+    // void initSalt(); // Removed
+    // QString getSaltedIpHash(const QString& ipAddress) const; // Removed
     void loadIgnoredIpHashes();
     void saveIgnoredIpHashes() const;
     // void loadPlayerIpMap(); // If we need to persist it, for now manage in memory
