@@ -293,8 +293,10 @@ else(ANDROID)
         add_subdirectory(share)
     endif()
 
-    add_subdirectory(bin)
-    add_subdirectory(tools)
+    # if(NOT ANDROID)
+    #   add_subdirectory(bin)
+    #   add_subdirectory(tools)
+    # endif()
 endif(ANDROID)
 
 include(${CMAKE_MODULE_PATH}/cpackvars.cmake)
