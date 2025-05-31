@@ -693,20 +693,23 @@ void HWChatWidget::clear()
 
 void HWChatWidget::onPlayerInfo(
             const QString & nick,
-            const QString & ip, // This 'ip' parameter is now assumed to be ipHash
+            const QString & ipHashFromServer, // This comes as "[hash]" or "[]"
             const QString & version,
             const QString & roomInfo)
 {
-    // New way: 'ip' parameter is now ipHash
-    QString ipHash_onPlayerInfo = ip; // Assuming 'ip' param now carries the hash
-    if (ipHash_onPlayerInfo == "[]") { // Server might send "[]" if hash is unavailable/not applicable
-        ipHash_onPlayerInfo.clear();
+    QString processedIpHash = ipHashFromServer;
+    if (processedIpHash.startsWith('[') && processedIpHash.endsWith(']')) {
+        processedIpHash = processedIpHash.mid(1, processedIpHash.length() - 2);
     }
+    // If processedIpHash was "[]", it becomes "", which is correctly handled as no hash.
+    // If it was "[actualhash]", it becomes "actualhash".
+
     if (m_usersModel) {
-        m_usersModel->storePlayerIpHash(nick, ipHash_onPlayerInfo);
+        // Store the cleaned hash (without brackets)
+        m_usersModel->storePlayerIpHash(nick, processedIpHash);
     }
 
-    // New (remove IP/Hash display for privacy, or decide if showing hash is useful):
+    // The addLine call for player info (already modified to not show IP/hash)
     addLine("msg_PlayerInfo", QString(" >>> %1 - <span class=\"version\">%2</span> <span class=\"location\">%3</span>")
         .arg(linkedNick(nick))
         .arg(version.toHtmlEscaped())
@@ -844,14 +847,19 @@ void HWChatWidget::onShowUsersByIp()
     QStringList usersFromSameIpHash = m_usersModel->getUsersByPlayerName(nick);
 
     if (usersFromSameIpHash.isEmpty()) {
-        // This case should ideally not happen if the source 'nick' is valid and has an IP,
-        // unless they are the only one from that IP or IP is not known.
-        QMessageBox::information(this, tr("Users by IP Hash"), tr("No other users found sharing the same IP Hash as %1, or IP Hash is unknown.").arg(linkedNick(nick)));
+        // Original QMessageBox:
+        // QMessageBox::information(this, tr("Users by IP Hash"), tr("No other users found sharing the same IP Hash as %1, or IP Hash is unknown.").arg(linkedNick(nick)));
+        // New displayNotice:
+        displayNotice(tr("No other users found sharing the same IP Hash as %1, or IP Hash is unknown.").arg(nick)); // Using plain nick for notice clarity
     } else {
-        QString message = tr("Users sharing the same IP Hash as %1:\n\n%2")
-                            .arg(linkedNick(nick))
-                            .arg(usersFromSameIpHash.join(tr(", ")));
-        QMessageBox::information(this, tr("Users by IP Hash"), message);
+        QString usersListString = usersFromSameIpHash.join(tr(", "));
+        // Original QMessageBox:
+        // QString message = tr("Users sharing the same IP Hash as %1:\n\n%2")
+        //                       .arg(linkedNick(nick))
+        //                       .arg(usersListString);
+        // QMessageBox::information(this, tr("Users by IP Hash"), message);
+        // New displayNotice:
+        displayNotice(tr("Users sharing the same IP Hash as %1: %2").arg(nick).arg(usersListString));
     }
 }
 void HWChatWidget::onFriend()
