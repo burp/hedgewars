@@ -1,3 +1,4 @@
+cmake_policy(SET CMP0177 NEW)
 
 if(UNIX AND NOT APPLE)
     configure_file(hwengine.desktop.in hwengine.desktop)
