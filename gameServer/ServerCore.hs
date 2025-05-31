@@ -85,8 +85,9 @@ startServer si = do
     noticeM "Core" $ "Listening on port " ++ show (listenPort si)
 
     _ <- forkIO $
-        acceptLoop
+        acceptLoop -- Updated call
             (fromJust $ serverSocket si)
+            (serverWideSalt si) -- Pass the server-wide salt
             (coreChan si)
 
     _ <- forkIO $ timerLoop 0 $ coreChan si
