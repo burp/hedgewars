@@ -187,27 +187,36 @@ handleCmd_inRoom ["REMOVE_TEAM", tName] = do
 
 handleCmd_inRoom ["HH_NUM", teamName, numberStr] = do
     cl <- thisClient
-    r <- thisRoom
-    clChan <- thisClientChans
-    others <- roomOthersChans
+    r <- thisRoom -- r is RoomInfo
+    thisClChan <- thisClientChans -- Get the current client's channel
+    roomChans <- roomClientsChans -- Get all channels in the room
 
-    let maybeTeam = findTeam r
-    let team = fromJust maybeTeam
+    let maybeTeam = L.find (\t -> teamName == teamname t) (teams r)
 
-    return $
-        if not $ isMaster cl then
-            [ProtocolError $ loc "You're not the room master!"]
-        else if isNothing maybeTeam then
-            []
-        else if hhNumber < 1 || hhNumber > cHogsPerTeam || hhNumber > canAddNumber r + hhnum team then
-            [AnswerClients clChan ["HH_NUM", teamName, showB $ hhnum team]]
+    if not $ isMaster cl then
+        return [ProtocolError $ loc "You're not the room master!"]
+    else if isNothing maybeTeam then
+        -- Send warning to master if team not found
+        return [AnswerClients thisClChan ["WARNING", loc "Team not found."]]
+    else
+        let teamToUpdate = fromJust maybeTeam
+            requestedHHNumber = readInt_ numberStr
+            currentTotalHogs = sum $ map hhnum (teams r)
+            -- Calculate new total if this team's hedgehog count changes
+            newTotalHogsIfUpdated = currentTotalHogs - hhnum teamToUpdate + requestedHHNumber
+        in
+        if requestedHHNumber < 1 || requestedHHNumber > cHogsPerTeam || newTotalHogsIfUpdated > cMaxHHs then
+            -- Invalid: send back old number to master
+            return [AnswerClients thisClChan ["HH_NUM", teamName, showB $ hhnum teamToUpdate]]
         else
-            [ModifyRoom $ modifyTeam team{hhnum = hhNumber},
-            AnswerClients others ["HH_NUM", teamName, showB hhNumber]]
-    where
-        hhNumber = readInt_ numberStr
-        findTeam = find (\t -> teamName == teamname t) . teams
-        canAddNumber = (-) cMaxHHs . sum . map hhnum . teams
+            -- Valid: apply the change
+            let updatedTeam = teamToUpdate {hhnum = requestedHHNumber}
+            in
+            return [
+                ModifyRoom (\roomInfo -> roomInfo { teams = map (\t -> if teamname t == teamName then updatedTeam else t) (teams roomInfo) }),
+                AnswerClients roomChans ["HH_NUM", teamName, showB requestedHHNumber], -- Notify all in room
+                SendUpdateOnThisRoom -- Crucial for global consistency and new joiners
+            ]
 
 
 
