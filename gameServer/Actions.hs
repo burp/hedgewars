@@ -210,10 +210,52 @@ processAction (MoveToRoom ri) = do
     allClientsChans <- liftM (Prelude.map sendChan . Prelude.filter isVisible) $! allClientsS
 
     mapM_ processAction [
-        AnswerClients chans ["JOINED", clNick]
-        , AnswerClients allClientsChans ["CLIENT_FLAGS", "+i", clNick]
+        AnswerClients chans ["JOINED", clNick] -- Inform everyone in room (incl. new client)
+        , AnswerClients allClientsChans ["CLIENT_FLAGS", "+i", clNick] -- Update server-wide status
         , RegisterEvent RoomJoin
         ]
+
+    -- <<<< NEW LOGIC STARTS HERE >>>>
+    -- Check if a game is active in the room they just joined
+    roomInfoCurrent <- io $ room'sM rnc id ri -- Get the full RoomInfo for the joined room
+    case gameInfo roomInfoCurrent of
+        Just activeGame -> do -- A game is in progress
+            joiningClientChan <- client'sM rnc sendChan ci    -- Get the specific channel for the joining client 'ci'
+            joiningClientNick <- client'sM rnc nick ci        -- Get nick for +g flag
+
+            let sendToJoiningClient msg = AnswerClients [joiningClientChan] msg
+
+            -- Send game parameters from activeGame
+            io $ infoM "GameSync" ("Sending active game parameters to client: " ++ show ci ++ " for room " ++ show ri)
+            forM_ (Map.toList $ gameMapParams activeGame) $ \(k, v) ->
+                processAction $ sendToJoiningClient ["CFG", k, v]
+            forM_ (Map.toList $ gameParams activeGame) $ \(k, v) ->
+                processAction $ sendToJoiningClient ["CFG", k, v]
+
+            -- Send teams from activeGame.teamsInGame
+            io $ infoM "GameSync" ("Sending active game teams to client: " ++ show ci)
+            forM_ (teamsInGame activeGame) $ \team -> do
+                processAction $ sendToJoiningClient (teamToNet team) -- teamToNet is from CoreTypes
+                processAction $ sendToJoiningClient ["TEAM_COLOR", teamname team, teamcolor team]
+                processAction $ sendToJoiningClient ["HH_NUM", teamname team, showB $ hhnum team]
+
+            -- Mark client as "in game" on their side and server side
+            -- Also set isJoinedMidGame, which might be used by client or other server logic
+            processAction $ ModifyClient2 ci (\c -> c{isInGame = True, isJoinedMidGame = True})
+            -- Only send +g flag after isInGame state is confirmed by server for the client
+            -- The client_flags +g message might be better sent after client acknowledges game settings
+            -- or as part of a "READY_TO_SYNC_GAME" sequence. For now, send it.
+            processAction $ sendToJoiningClient ["CLIENT_FLAGS", "+g", joiningClientNick]
+
+
+        Nothing -> do -- No game in progress
+            -- Client will use the lobby settings they already have or get from SendUpdateOnThisRoom.
+            -- Ensure their game-related flags are cleared if they were previously in a game.
+            processAction $ ModifyClient2 ci (\c -> c{isInGame = False, isJoinedMidGame = False })
+            io $ infoM "GameSync" ("No active game in room " ++ show ri ++ ". Client " ++ show ci ++ " joins normally.")
+            pass -- Do nothing special as lobby info is handled by ROOMS/ROOM_UPD
+
+    -- <<<< NEW LOGIC ENDS HERE >>>>
 
 
 processAction (MoveToLobby msg) = do

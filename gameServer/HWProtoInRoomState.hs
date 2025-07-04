@@ -188,34 +188,38 @@ handleCmd_inRoom ["REMOVE_TEAM", tName] = do
 handleCmd_inRoom ["HH_NUM", teamName, numberStr] = do
     cl <- thisClient
     r <- thisRoom -- r is RoomInfo
-    thisClChan <- thisClientChans -- Get the current client's channel
+    thisClChan <- thisClientChans -- Get the current client's channel (master)
     roomChans <- roomClientsChans -- Get all channels in the room
 
-    let maybeTeam = L.find (\t -> teamName == teamname t) (teams r)
+    let maybeTeam = L.find (\t -> teamName == teamname t) (teams r) -- Search in lobby teams
 
     if not $ isMaster cl then
         return [ProtocolError $ loc "You're not the room master!"]
     else if isNothing maybeTeam then
-        -- Send warning to master if team not found
-        return [AnswerClients thisClChan ["WARNING", loc "Team not found."]]
+        -- Send warning to master if team not found in lobby settings
+        return [AnswerClients thisClChan ["WARNING", loc "Team not found in lobby settings."]]
     else
-        let teamToUpdate = fromJust maybeTeam
+        let teamToUpdate = fromJust maybeTeam -- This is the lobby version of the team
             requestedHHNumber = readInt_ numberStr
-            currentTotalHogs = sum $ map hhnum (teams r)
-            -- Calculate new total if this team's hedgehog count changes
-            newTotalHogsIfUpdated = currentTotalHogs - hhnum teamToUpdate + requestedHHNumber
+
+            -- Validation based on lobby settings
+            currentTotalHogsInLobby = sum $ map hhnum (teams r)
+            newTotalHogsInLobbyIfUpdated = currentTotalHogsInLobby - hhnum teamToUpdate + requestedHHNumber
         in
-        if requestedHHNumber < 1 || requestedHHNumber > cHogsPerTeam || newTotalHogsIfUpdated > cMaxHHs then
-            -- Invalid: send back old number to master
+        if requestedHHNumber < 1 || requestedHHNumber > cHogsPerTeam || newTotalHogsInLobbyIfUpdated > cMaxHHs then
+            -- Invalid: send back old lobby hhnum to master
             return [AnswerClients thisClChan ["HH_NUM", teamName, showB $ hhnum teamToUpdate]]
         else
-            -- Valid: apply the change
-            let updatedTeam = teamToUpdate {hhnum = requestedHHNumber}
+            -- Valid: apply the change to RoomInfo.teams (lobby settings)
+            let updatedLobbyTeam = teamToUpdate {hhnum = requestedHHNumber}
             in
             return [
-                ModifyRoom (\roomInfo -> roomInfo { teams = map (\t -> if teamname t == teamName then updatedTeam else t) (teams roomInfo) }),
-                AnswerClients roomChans ["HH_NUM", teamName, showB requestedHHNumber], -- Notify all in room
-                SendUpdateOnThisRoom -- Crucial for global consistency and new joiners
+                -- This modifies RoomInfo.teams
+                ModifyRoom (\roomInfo -> roomInfo { teams = map (\t -> if teamname t == teamName then updatedLobbyTeam else t) (teams roomInfo) }),
+                -- Send specific HH_NUM update to all clients in the room (they can update their UI for lobby view)
+                AnswerClients roomChans ["HH_NUM", teamName, showB requestedHHNumber],
+                -- Broadcast the updated LOBBY RoomInfo to everyone on the server
+                SendUpdateOnThisRoom
             ]
 
 
