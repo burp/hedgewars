@@ -11,20 +11,21 @@ set(CMAKE_AUTORCC ON)
 #find_package(PkgConfig REQUIRED)
 #pkg_check_modules(SDL2_MIXER REQUIRED IMPORTED_TARGET SDL2_mixer)
 
+# --- Workaround for custom FindOpenGL shadowing system and missing OpenGL::GL target ---
+if(NOT TARGET OpenGL::GL)
+    find_package(OpenGL)
+    if(OPENGL_FOUND AND NOT TARGET OpenGL::GL)
+        add_library(OpenGL::GL INTERFACE IMPORTED)
+        set_target_properties(OpenGL::GL PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${OPENGL_LIBRARIES}"
+            INTERFACE_INCLUDE_DIRECTORIES "${OPENGL_INCLUDE_DIR}"
+        )
+    endif()
+endif()
+
 find_package(Qt6 6.4 REQUIRED COMPONENTS Core Widgets Network LinguistTools)
 find_package(SDL2 REQUIRED CONFIG)
 find_package(SDL2_mixer REQUIRED)
-
-# --- Workaround Qt + CMake OpenGL::GL issue -------------------------------
-# Qt's WrapOpenGL target exists, but OpenGL::GL imported target may not.
-# Create a lightweight imported INTERFACE target that just forwards to WrapOpenGL.
-if(TARGET WrapOpenGL::WrapOpenGL AND NOT TARGET OpenGL::GL)
-    message(STATUS "Creating compatibility target OpenGL::GL -> WrapOpenGL::WrapOpenGL")
-    add_library(OpenGL::GL INTERFACE IMPORTED)
-    set_target_properties(OpenGL::GL PROPERTIES
-        INTERFACE_LINK_LIBRARIES "WrapOpenGL::WrapOpenGL"
-    )
-endif()
 
 # server messages localization
 file(GLOB ServerSources ${CMAKE_CURRENT_SOURCE_DIR}/../gameServer/*.hs)
@@ -81,7 +82,7 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/creditsmessages.h ${locsout})
 qt_standard_project_setup()
 
 qt_add_executable(hedgewars
-    WIN32 MACOSX_BUNDLE
+    WIN32
     hedgewars.qrc
     hedgewars.rc
 
@@ -338,6 +339,31 @@ target_link_libraries(hedgewars
         physfs
         physlayer
 )
+
+if(APPLE)
+    target_sources(hedgewars PRIVATE
+        util/platform/CocoaInitializer.mm
+        util/platform/M3Panel.mm
+        util/platform/M3InstallController.m
+        util/platform/NSWorkspace_RBAdditions.m
+    )
+    
+    find_library(iokit_framework NAMES IOKit REQUIRED)
+    target_link_libraries(hedgewars PRIVATE
+        ${iokit_framework}
+        "-framework Foundation"
+        "-framework AppKit"
+    )
+
+    if(NOT NOAUTOUPDATE)
+        find_package(Sparkle)
+        if(SPARKLE_FOUND)
+            target_compile_definitions(hedgewars PRIVATE SPARKLE_ENABLED)
+            target_sources(hedgewars PRIVATE util/platform/SparkleAutoUpdater.mm)
+            target_link_libraries(hedgewars PRIVATE ${SPARKLE_LIBRARY})
+        endif()
+    endif()
+endif()
 
 include(GNUInstallDirs)
 

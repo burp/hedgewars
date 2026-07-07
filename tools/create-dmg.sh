@@ -134,6 +134,16 @@ fi
 
 # Create the image
 echo "Creating disk image..."
+
+# Allow OS indexers (Spotlight/XProtect) to release locks on the files
+sleep 5
+
+# Proactively force detach any existing mounts of the temp or final DMG to prevent locking
+MOUNT_DIR="/Volumes/${VOLUME_NAME}"
+hdiutil detach "${MOUNT_DIR}" -force 2>/dev/null || true
+hdiutil detach "${DMG_TEMP_NAME}" -force 2>/dev/null || true
+hdiutil detach "${DMG_PATH}" -force 2>/dev/null || true
+
 test -f "${DMG_TEMP_NAME}" && rm -f "${DMG_TEMP_NAME}"
 ACTUAL_SIZE=`du -sm "$SRC_FOLDER" | sed -e 's/	.*//g'`
 DISK_IMAGE_SIZE=$(expr $ACTUAL_SIZE + 20)

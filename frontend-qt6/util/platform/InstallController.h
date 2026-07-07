@@ -21,6 +21,7 @@
 
 class InstallController {
  public:
+  InstallController() = default;
   InstallController(const InstallController &) = delete;
   InstallController(InstallController &&) = delete;
   InstallController &operator=(const InstallController &) = delete;
