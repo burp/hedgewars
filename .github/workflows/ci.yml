@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build:
     name: osx/clang/${{ matrix.build_args }}
-    runs-on: macos-15-intel
+    runs-on: macos-14
 
     strategy:
       fail-fast: false
@@ -57,7 +57,8 @@ jobs:
 
       - name: Install Dependencies (macOS)
         run: |
-          rm -f /usr/local/bin/openssl || true
+          rm -f /usr/local/bin/openssl /opt/homebrew/bin/openssl || true
+          brew unlink openssl@1.1 || true
           brew install --overwrite qt6 fpc glew physfs lua ffmpeg 7zip libvorbis libogg
 
           mkdir -p $HOME/Library/Frameworks
@@ -96,9 +97,14 @@ jobs:
         working-directory: ./build
         run: make dmg
 
+      - name: Verify App Executable Signature (macOS)
+        if: success()
+        run: |
+          python3 tools/verify_app.py
+
       - name: Upload macOS DMG Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: Hedgewars-macOS-Intel
+          name: Hedgewars-macOS-AppleSilicon
           path: build/Hedgewars-*.dmg

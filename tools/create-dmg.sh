@@ -132,6 +132,11 @@ if [ -f "$SRC_FOLDER/.DS_Store" ]; then
     rm "$SRC_FOLDER/.DS_Store"
 fi
 
+if [ -d "$SRC_FOLDER/Contents" ]; then
+    echo "Signing the application bundle..."
+    codesign --force --deep --sign - "$SRC_FOLDER"
+fi
+
 # Create the image
 echo "Creating disk image..."
 
@@ -198,7 +203,7 @@ echo "Done fixing permissions."
 
 # make the top window open itself on mount:
 echo "Blessing started"
-bless --folder "${MOUNT_DIR}" --openfolder "${MOUNT_DIR}"
+bless --folder "${MOUNT_DIR}" --openfolder "${MOUNT_DIR}" || bless --folder "${MOUNT_DIR}" || true
 echo "Blessing finished"
 
 if ! test -z "$VOLUME_ICON_FILE"; then
