@@ -77,11 +77,13 @@ if(APPLE AND NOT SKIPBUNDLE)
       endif()
     endmacro()
 
-    # install cocoa plugin and build list to send to fixup_bundle
+    # install cocoa and offscreen plugins and build list to send to fixup_bundle
     if(QT_VERSION EQUAL 6)
         install_qt5_plugin("Qt6::QCocoaIntegrationPlugin" QT_PLUGINS)
+        install_qt5_plugin("Qt6::QOffscreenIntegrationPlugin" QT_PLUGINS)
     else()
         install_qt5_plugin("Qt5::QCocoaIntegrationPlugin" QT_PLUGINS)
+        install_qt5_plugin("Qt5::QOffscreenIntegrationPlugin" QT_PLUGINS)
     endif()
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
         "[Paths]\nPlugins = ${_qt_plugin_dir}\n")

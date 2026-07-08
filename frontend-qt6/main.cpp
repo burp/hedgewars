@@ -28,6 +28,7 @@
 #include <QStyleFactory>
 #include <QTranslator>
 #include <iostream>
+#include <mutex>
 
 #include "DataManager.h"
 #include "HWApplication.h"
@@ -217,6 +218,9 @@ QString hedgewarsFormatLogMessage(QtMsgType type,
 
 void hedgewarsMessageOutput(QtMsgType type, const QMessageLogContext &context,
                             const QString &msg) {
+  static std::mutex msgMutex;
+  std::lock_guard<std::mutex> lock(msgMutex);
+
   static const auto haveMessagePattern =
       qEnvironmentVariableIsSet("QT_MESSAGE_PATTERN");
 
