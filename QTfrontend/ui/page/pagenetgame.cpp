@@ -39,7 +39,7 @@ QLayout * PageNetGame::bodyLayoutDefinition()
     pageLayout->setColumnStretch(0, 1);
     pageLayout->setColumnStretch(1, 1);
     pageLayout->setRowStretch(0, 0);
-    pageLayout->setRowStretch(1, 0);
+    pageLayout->setRowStretch(1, 1);
     pageLayout->setRowStretch(2, 1);
 
     // Room config
