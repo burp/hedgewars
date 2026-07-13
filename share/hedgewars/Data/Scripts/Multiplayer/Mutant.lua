@@ -275,8 +275,6 @@ function onNewTurn()
         AddCaption( loc("First killer will mutate"), capcolDefault, capgrpGameState )
     end
 
-    checkScore()
-
     for i=0, TeamsCount-1 do
         local teamName = GetTeamName(i)
         if not teamsDeleted[teamName] then
@@ -298,6 +296,10 @@ function onNewTurn()
 
     setGearValue(CurrentHedgehog, "Alive", true)
 
+end
+
+function onEndTurn()
+    checkScore()
 end
 
 function countBodies()
