@@ -186,6 +186,10 @@ HWApplication::tr("Options", "command-line")
 }
 
 int main(int argc, char *argv[]) {
+    if (!qEnvironmentVariableIsSet("QT_AUTO_SCREEN_SCALE_FACTOR")) {
+        qputenv("QT_AUTO_SCREEN_SCALE_FACTOR", "1");
+    }
+
     cfgdir->setPath(QDir::homePath());
 
     // Since we're calling this first, closeResources() will be the last thing called after main() returns.
