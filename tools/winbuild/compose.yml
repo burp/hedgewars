@@ -5,5 +5,7 @@ services:
     volumes:
       - ../../:/src
       - ./out:/build-Hedgewars
+    environment:
+      - BUILD_SERVER
     command: ["wine", "cmd", "/c", "z:/src/tools/winbuild/build-hedgewars.cmd"]
 

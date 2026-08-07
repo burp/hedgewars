@@ -29,6 +29,13 @@ set CMAKE_PREFIX_PATH=%ROOTPATH%/ffmpeg;%ROOTPATH%/zlib1211;%ROOTPATH%/libpng16;
 set GREP=%ROOTPATH%/w64devkit/bin/grep.exe
 set SED=%ROOTPATH%/w64devkit/bin/sed.exe
 
+::set BUILD_SERVER=1 in the environment to also build the game server
+if "%BUILD_SERVER%" == "" (
+    set BUILD_SERVER_FLAG=-DNOSERVER=1
+) else (
+    set BUILD_SERVER_FLAG=
+)
+
 echo Removing old build dir...
 del /s /q "%BUILDDIR%"
 %CMAKE% -E make_directory "%BUILDDIR%"
@@ -55,6 +62,7 @@ echo Configuring...
 cd %BUILDDIR%
 %CMAKE% -G Ninja -DCMAKE_BUILD_TYPE="Release" ^
       -DWIN32_WIN64_CROSS_COMPILE=on ^
+      %BUILD_SERVER_FLAG% ^
       -DCABAL_FLAGS="-j --project-file=tools/winbuild/cabal.project.local" ^
       -DEXTERNAL_BIN_DIR="%DLLS_DIR%" ^
       %HWREPO%

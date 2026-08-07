@@ -69,11 +69,18 @@ RUN wget --no-verbose \
         https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.1/SDL2_mixer-devel-2.8.1-mingw.zip
 
 # Haskell
+#
+# Only needed to build the game server, which is off by default. Build with
+# --build-arg BUILD_SERVER=1 to get the toolchain into the image.
 
-RUN wget -qO- https://downloads.haskell.org/~ghc/9.12.3/ghc-9.12.3-x86_64-unknown-mingw32-int_native.tar.xz | tar xJ --verbose
+ARG BUILD_SERVER=
 
-RUN wget --no-verbose https://downloads.haskell.org/cabal/cabal-install-3.16.1.0/cabal-install-3.16.1.0-x86_64-windows.zip \
-        https://eternallybored.org/misc/wget/1.21.4/64/wget.exe && \
+RUN if [ -n "$BUILD_SERVER" ]; then \
+        wget -qO- https://downloads.haskell.org/~ghc/9.12.3/ghc-9.12.3-x86_64-unknown-mingw32-int_native.tar.xz | tar xJ --verbose && \
+        wget --no-verbose https://downloads.haskell.org/cabal/cabal-install-3.16.1.0/cabal-install-3.16.1.0-x86_64-windows.zip ; \
+    fi
+
+RUN wget --no-verbose https://eternallybored.org/misc/wget/1.21.4/64/wget.exe && \
         mv wget.exe w64devkit/bin/
 
 # NSIS
@@ -83,7 +90,9 @@ RUN wget --no-verbose https://sourceforge.net/projects/nsis/files/NSIS%203/3.11/
 # Upack cabal, NSIS and SDL libs
 
 RUN find *.zip -print -exec unzip -q {} \; -delete \
-        && mv plan.json cabal.exe ghc-9.12.3-x86_64-unknown-mingw32/bin/
+        && if [ -n "$BUILD_SERVER" ]; then \
+               mv plan.json cabal.exe ghc-9.12.3-x86_64-unknown-mingw32/bin/ ; \
+           fi
 
 # FPC
 
@@ -121,15 +130,19 @@ RUN mkdir Z prefetch && \
     ln -s /prefetch /Z/prefetch && \
     mkdir build-Hedgewars && \
     ln -s /build-Hedgewars /Z/build-Hedgewars && \
-    cd prefetch && \  
-    wine cmd /c "set PATH=z:/ghc-9.12.3-x86_64-unknown-mingw32/bin && \
-        cabal v2-update"
+    if [ -n "$BUILD_SERVER" ]; then \
+        cd prefetch && \
+        wine cmd /c "set PATH=z:/ghc-9.12.3-x86_64-unknown-mingw32/bin && \
+            cabal v2-update" ; \
+    fi
 
 COPY ./hedgewars-server.cabal /prefetch/
 
-RUN cd prefetch && \
-    wine cmd /c "set PATH=z:/ghc-9.12.3-x86_64-unknown-mingw32/bin && \
-        cabal fetch" && \
+RUN if [ -n "$BUILD_SERVER" ]; then \
+        cd prefetch && \
+        wine cmd /c "set PATH=z:/ghc-9.12.3-x86_64-unknown-mingw32/bin && \
+            cabal fetch" ; \
+    fi && \
     rm -rf /prefetch
 
 RUN wine cmd /c "set PATH=z:/RUST/bin && \
