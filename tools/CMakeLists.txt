@@ -7,7 +7,15 @@ if(NOT APPLE)
 endif()
 
 if(APPLE AND NOT SKIPBUNDLE)
-    find_package(Qt5 REQUIRED QUIET COMPONENTS Core Widgets Gui Network)
+    find_package(Qt6 QUIET COMPONENTS Core Widgets Gui Network)
+    if(Qt6_FOUND)
+        set(QT_VERSION 6)
+        set(Qt_FOUND TRUE)
+    else()
+        find_package(Qt5 REQUIRED QUIET COMPONENTS Core Widgets Gui Network)
+        set(QT_VERSION 5)
+        set(Qt_FOUND TRUE)
+    endif()
     find_package(SDL2 REQUIRED CONFIG)
     find_package(SDL2_image 2 REQUIRED)
     find_package(SDL2_net 2 REQUIRED)
@@ -53,12 +61,13 @@ if(APPLE AND NOT SKIPBUNDLE)
     macro(install_qt5_plugin _qt_plugin_name _qt_plugins_var)
       get_target_property(_qt_plugin_path "${_qt_plugin_name}" LOCATION)
       if(EXISTS "${_qt_plugin_path}")
-        get_filename_component(_qt_plugin_file "${_qt_plugin_path}" NAME)
+        get_filename_component(_qt_plugin_realpath "${_qt_plugin_path}" REALPATH)
+        get_filename_component(_qt_plugin_file "${_qt_plugin_realpath}" NAME)
         get_filename_component(_qt_plugin_type "${_qt_plugin_path}" PATH)
         get_filename_component(_qt_plugin_type "${_qt_plugin_type}" NAME)
         set(_qt_plugin_dir "PlugIns")
         set(_qt_plugin_dest "${_qt_plugin_dir}/${_qt_plugin_type}")
-        install(FILES "${_qt_plugin_path}"
+        install(FILES "${_qt_plugin_realpath}"
           DESTINATION "../${_qt_plugin_dest}" # relative to install dir
           ${COMPONENT})
         list(APPEND ${_qt_plugins_var}
@@ -68,8 +77,14 @@ if(APPLE AND NOT SKIPBUNDLE)
       endif()
     endmacro()
 
-    # install cocoa plugin and build list to send to fixup_bundle
-    install_qt5_plugin("Qt5::QCocoaIntegrationPlugin" QT_PLUGINS)
+    # install cocoa and offscreen plugins and build list to send to fixup_bundle
+    if(QT_VERSION EQUAL 6)
+        install_qt5_plugin("Qt6::QCocoaIntegrationPlugin" QT_PLUGINS)
+        install_qt5_plugin("Qt6::QOffscreenIntegrationPlugin" QT_PLUGINS)
+    else()
+        install_qt5_plugin("Qt5::QCocoaIntegrationPlugin" QT_PLUGINS)
+        install_qt5_plugin("Qt5::QOffscreenIntegrationPlugin" QT_PLUGINS)
+    endif()
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
         "[Paths]\nPlugins = ${_qt_plugin_dir}\n")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
@@ -119,8 +134,8 @@ if(APPLE AND NOT SKIPBUNDLE)
                                   --icon "Hedgewars" 190 190
                                   --app-drop-link 410 190
                                   --background "${CMAKE_CURRENT_SOURCE_DIR}/../misc/dmgBackground.png"
+                                  --no-internet-enable
                                   ${CMAKE_BINARY_DIR}/Hedgewars-${HEDGEWARS_VERSION}.dmg
                                   ${CMAKE_BINARY_DIR}/${APP_DIR}
                           WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 endif()
-

@@ -1,0 +1,91 @@
+# .github/workflows/windows.yml
+#
+# Cross-builds the Windows package on a Linux runner, using the Wine-based
+# image from tools/winbuild (published by winbuild-image.yml). Produces the
+# same cpack ZIP and NSIS installer that tools/winbuild/HOWTO describes.
+name: Windows build
+
+on:
+  push:
+    branches:
+      - master
+      - 'test-*'
+      - 'ci-*'
+  workflow_dispatch:
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.ref }}'
+  cancel-in-progress: true
+
+env:
+  WINBUILD_IMAGE: 'ghcr.io/${{ github.repository_owner }}/hedgewars-winbuild:latest'
+
+jobs:
+  windows:
+    name: windows/mingw-w64 (wine)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the Windows build image
+        run: docker pull "$WINBUILD_IMAGE"
+
+      - name: Record revision information
+        # The build container has neither hg nor git on its PATH, and
+        # share/version_info.txt is not in the repository, so
+        # cmake_modules/revinfo.cmake would otherwise warn and fall through to
+        # "Building 1.1.0-r0000 (unknown)" - a downloadable test build that
+        # cannot say which commit it came from.
+        run: |
+          printf 'Hedgewars versioning information, do not modify\nrev GIT\nhash %s\n' \
+                 "$(git rev-parse --short HEAD)" > share/version_info.txt
+          cat share/version_info.txt
+
+      - name: Build Hedgewars
+        # The game server is not built; see tools/winbuild/build-hedgewars.cmd.
+        run: |
+          mkdir -p out
+          docker run --rm \
+              -v "$PWD":/src \
+              -v "$PWD/out":/build-Hedgewars \
+              "$WINBUILD_IMAGE" \
+              wine cmd /c 'z:/src/tools/winbuild/build-hedgewars.cmd'
+
+      - name: Take ownership of build output
+        # The container runs as root, so everything it wrote is root-owned.
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" out
+
+      - name: Check that packages were produced
+        # build-hedgewars.cmd does not check cpack's exit status, so a packaging
+        # failure would otherwise leave a green job with no artifacts.
+        run: |
+          ls -la out
+          ls out/Hedgewars-*.zip >/dev/null || { echo "::error::no ZIP package produced"; exit 1; }
+          ls out/Hedgewars-*.exe >/dev/null || { echo "::error::no NSIS installer produced"; exit 1; }
+
+      - name: Upload the portable Windows package
+        # Only the ZIP. It holds the same files as the NSIS installer, and
+        # GitHub zips the artifact on download regardless, so uploading both
+        # means unpacking twice to reach one copy of the game. The portable one
+        # is what a test build wants: unpack and run, nothing installed. The
+        # installer is still built and checked above, so that path keeps being
+        # exercised for release builds.
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hedgewars-Windows-x86_64
+          path: out/Hedgewars-*.zip

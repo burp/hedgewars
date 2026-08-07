@@ -8,3 +8,9 @@
 
 Collect artifacts in out/ folder
 
+== The game server is not built by default. To build it too, the image needs
+== the Haskell toolchain, which is left out unless asked for:
+
+> docker build --progress=plain --build-arg BUILD_SERVER=1 -t win-hedgewarsbe .
+> BUILD_SERVER=1 docker-compose run --rm build
+

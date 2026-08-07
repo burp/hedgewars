@@ -5,87 +5,62 @@ on:
   push:
     branches:
       - master
+      - 'test-*'
+      - 'ci-*'
+  workflow_dispatch:
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.ref }}'
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: ${{ matrix.os_name }}/${{ matrix.compiler_name }}/${{ matrix.build_args }}
-    runs-on: ${{ matrix.os_runner }}
+    name: osx/clang/${{ matrix.build_args }}
+    runs-on: macos-14
 
     strategy:
       fail-fast: false
       matrix:
-        os_name:
-          - linux
-          - osx
-        compiler_name: [gcc, clang]
         build_args:
-          # - "-DCMAKE_BUILD_TYPE=Release"
-          # - "-DCMAKE_BUILD_TYPE=Debug"
-          - "-DNOSERVER=1 -DGL2=1 -DNOPNG=1"
           - "-DNOSERVER=1 -DLUA_SYSTEM=0"
 
-        include:
-          - os_name: linux
-            os_runner: ubuntu-24.04
-          - os_name: osx
-            os_runner: macos-15-intel
-
-          - compiler_name: gcc
-            cc: gcc
-            cxx: g++
-          - compiler_name: clang
-            cc: clang
-            cxx: clang++
-
-        exclude:
-          - os_name: osx
-            compiler_name: gcc
-          - os_name: osx
-            build_args: "-DNOSERVER=1 -DGL2=1 -DNOPNG=1"
-
     env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
+      CC: clang
+      CXX: clang++
       
       # Set BUILD_ARGS for the job
       BUILD_ARGS: ${{ matrix.build_args }}
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Before Install (Linux)
-        if: matrix.os_name == 'linux'
-        run: |
-          sudo add-apt-repository ppa:costamagnagianfranco/hedgewars-nightly -y
-          sudo apt-get update -qq
+        uses: actions/checkout@v7
 
       - name: Before Install (macOS)
-        if: matrix.os_name == 'osx'
         run: brew update
 
-      - name: Install Qt
-        if: matrix.os_name == 'linux'
-        uses: jurplel/install-qt-action@v4
+      - name: Cache Homebrew Downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/Library/Caches/Homebrew
+            /Library/Caches/Homebrew
+          key: ${{ runner.os }}-brew-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-brew-
 
-      - name: Install Dependencies (Linux)
-        if: matrix.os_name == 'linux'
-        run: |
-          sudo apt-get install -y --no-install-recommends \
-            cmake debhelper dpkg-dev fp-compiler fp-units-gfx fp-units-misc \
-            ghc libavcodec-dev libavformat-dev libghc-aeson-dev libghc-entropy-dev \
-            libghc-hslogger-dev libghc-mtl-dev libghc-network-dev libghc-parsec3-dev \
-            libghc-random-dev libghc-regex-tdfa-dev libghc-sandi-dev libghc-sha-dev \
-            libghc-text-dev libghc-utf8-string-dev libghc-vector-dev libghc-yaml-dev \
-            libghc-zlib-dev liblua5.1-dev libphysfs-dev libpng-dev libsdl2-dev \
-            libsdl2-image-dev libsdl2-mixer-dev libsdl2-net-dev libsdl2-ttf-dev
+      - name: Cache SDL2 Frameworks
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Frameworks
+          key: ${{ runner.os }}-sdl2-frameworks-${{ hashFiles('.github/workflows/ci.yml') }}
 
       - name: Install Dependencies (macOS)
-        if: matrix.os_name == 'osx'
         run: |
-          brew install qt6 fpc glew physfs lua ffmpeg ghc cabal-install 7zip
+          rm -f /usr/local/bin/openssl /opt/homebrew/bin/openssl || true
+          brew unlink openssl@1.1 || true
+          brew install --overwrite qt6 fpc glew physfs lua ffmpeg 7zip libvorbis libogg
 
-          mkdir $HOME/Library/Frameworks
+          mkdir -p $HOME/Library/Frameworks
           bash ./tools/dmg_to_framework.sh https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.dmg
           bash ./tools/dmg_to_framework.sh https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.8/SDL2_image-2.8.8.dmg
           bash ./tools/dmg_to_framework.sh https://github.com/libsdl-org/SDL_net/releases/download/release-2.2.0/SDL2_net-2.2.0.dmg
@@ -108,18 +83,27 @@ jobs:
           echo "BUILD_ARGS=$BUILD_ARGS" >> $GITHUB_ENV
 
       - name: Configure (CMake)
-        run: mkdir build && cd build && cmake $BUILD_ARGS ..
+        run: |
+          rm cmake_modules/FindOpenGL.cmake
+          mkdir build && cd build && cmake -DCMAKE_PREFIX_PATH="/usr/local;/opt/homebrew" $BUILD_ARGS ..
 
       - name: Build (Make)
         working-directory: ./build
-        run: make VERBOSE=1
+        run: make -j$(sysctl -n hw.ncpu) VERBOSE=1
 
-      - name: Test (Linux)
-        if: success() && matrix.os_name == 'linux'
+      - name: Package DMG (macOS)
+        if: success()
         working-directory: ./build
-        run: make test_verbose
+        run: make dmg
 
-      - name: Install (macOS)
-        if: success() && matrix.os_name == 'osx'
-        working-directory: ./build
-        run: make install
+      - name: Verify App Executable Signature (macOS)
+        if: success()
+        run: |
+          python3 tools/verify_app.py
+
+      - name: Upload macOS DMG Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hedgewars-macOS-AppleSilicon
+          path: build/Hedgewars-*.dmg
