@@ -78,10 +78,14 @@ jobs:
           ls out/Hedgewars-*.zip >/dev/null || { echo "::error::no ZIP package produced"; exit 1; }
           ls out/Hedgewars-*.exe >/dev/null || { echo "::error::no NSIS installer produced"; exit 1; }
 
-      - name: Upload Windows packages
+      - name: Upload the portable Windows package
+        # Only the ZIP. It holds the same files as the NSIS installer, and
+        # GitHub zips the artifact on download regardless, so uploading both
+        # means unpacking twice to reach one copy of the game. The portable one
+        # is what a test build wants: unpack and run, nothing installed. The
+        # installer is still built and checked above, so that path keeps being
+        # exercised for release builds.
         uses: actions/upload-artifact@v4
         with:
           name: Hedgewars-Windows-x86_64
-          path: |
-            out/Hedgewars-*.zip
-            out/Hedgewars-*.exe
+          path: out/Hedgewars-*.zip
