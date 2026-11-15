@@ -152,7 +152,22 @@ hdiutil detach "${DMG_PATH}" -force 2>/dev/null || true
 test -f "${DMG_TEMP_NAME}" && rm -f "${DMG_TEMP_NAME}"
 ACTUAL_SIZE=`du -sm "$SRC_FOLDER" | sed -e 's/	.*//g'`
 DISK_IMAGE_SIZE=$(expr $ACTUAL_SIZE + 20)
-hdiutil create -srcfolder "$SRC_FOLDER" -volname "${VOLUME_NAME}" -fs HFS+ -fsargs "-c c=64,a=16,e=16" -format UDRW -size ${DISK_IMAGE_SIZE}m "${DMG_TEMP_NAME}"
+# hdiutil create can fail with "Resource busy" (e.g. on CI runners while
+# background scanners still hold the freshly signed files), so retry a few times
+HDIUTIL_ATTEMPT=1
+HDIUTIL_MAX_ATTEMPTS=6
+until hdiutil create -srcfolder "$SRC_FOLDER" -volname "${VOLUME_NAME}" -fs HFS+ -fsargs "-c c=64,a=16,e=16" -format UDRW -size ${DISK_IMAGE_SIZE}m "${DMG_TEMP_NAME}"
+do
+  if [ "$HDIUTIL_ATTEMPT" -ge "$HDIUTIL_MAX_ATTEMPTS" ]; then
+    echo "hdiutil create failed after $HDIUTIL_ATTEMPT attempts"
+    exit 1
+  fi
+  echo "hdiutil create failed (attempt $HDIUTIL_ATTEMPT/$HDIUTIL_MAX_ATTEMPTS), retrying..."
+  HDIUTIL_ATTEMPT=$((HDIUTIL_ATTEMPT + 1))
+  hdiutil detach "${MOUNT_DIR}" -force 2>/dev/null || true
+  rm -f "${DMG_TEMP_NAME}"
+  sleep $((HDIUTIL_ATTEMPT * 10))
+done
 
 # mount it
 echo "Mounting disk image..."
