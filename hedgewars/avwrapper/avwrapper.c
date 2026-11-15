@@ -233,7 +233,16 @@ static void AddAudioStream()
     g_pAudio->sample_fmt = AV_SAMPLE_FMT_S16;
     g_pAudio->sample_rate = g_Frequency;
 #if LIBAVCODEC_VERSION_MAJOR >= 60
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(61, 13, 100)
+    // AVCodec::ch_layouts was removed in FFmpeg 8.0
+    const AVChannelLayout* pChLayout = NULL;
+    if (avcodec_get_supported_config(g_pAudio, g_pACodec,
+            AV_CODEC_CONFIG_CHANNEL_LAYOUT, 0,
+            (const void**)&pChLayout, NULL) < 0)
+        pChLayout = NULL;
+#else
     const AVChannelLayout* pChLayout = g_pACodec->ch_layouts;
+#endif
     if (pChLayout)
     {
         for (; pChLayout->nb_channels; pChLayout++)
